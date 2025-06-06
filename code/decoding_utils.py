@@ -389,6 +389,33 @@ def wrap_decoder_helper(
         .sort('trial_index')
         .collect()
     )
+    
+    # select unit ids for resampling here - keep consistent across time bins
+    resample_unit_ids=[]
+    unique_unit_ids=(
+        utils.get_df('units', lazy=True)
+        .pipe(group_structures)
+        .filter(
+            params.units_query,
+            pl.col('session_id') == session_id,
+            pl.col('structure') == structure,
+            pl.col('electrode_group_name').is_in(electrode_group_names),
+        )
+        .select('unit_id')
+        .sort('unit_id')
+        .collect()
+        ['unit_id']
+        .unique()
+    )
+    
+    n_units_to_use = params.unit_subsample_size or len(unique_unit_ids) # if unit_subsample_size is None, use all available        
+    unit_idx = list(range(0, len(unique_unit_ids)))
+
+    for repeat_idx in range(params.n_repeats):
+        sel_unit_idx = random.sample(unit_idx, n_units_to_use)
+        resample_unit_ids.append(unique_unit_ids[sel_unit_idx])
+    resample_unit_ids=np.array(resample_unit_ids)
+
     for interval_config in params.spike_count_interval_configs:
         for start, stop in interval_config.intervals:
             spike_counts_df = (
@@ -489,7 +516,9 @@ def wrap_decoder_helper(
 
             for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure} | {session_id}'):
                 
-                sel_unit_idx = random.sample(unit_idx, n_units_to_use)
+                #sel_unit_idx = random.sample(unit_idx, n_units_to_use)
+
+                sel_unit_idx = np.where(np.isin(unit_ids, resample_unit_ids[repeat_idx]))[0]
                     
                 logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
                 
