@@ -112,7 +112,8 @@ class Params(pydantic_settings.BaseSettings):
         if self.unit_subsample_size is None:
             min_ = self.min_n_units
         else:
-            min_ = self.min_n_units + self.unit_subsample_size
+            #determine number of units required based on max of (min_n_units, unit_subsample_size)
+            min_ = max(self.min_n_units,self.unit_subsample_size)
         return pl.col('unit_id').n_unique().over(self.units_group_by).ge(min_)
 
     @pydantic.computed_field(repr=False)
