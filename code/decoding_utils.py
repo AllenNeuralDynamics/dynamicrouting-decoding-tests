@@ -454,17 +454,7 @@ def wrap_decoder_helper(
             # sequence of unit_ids is used later: don't re-sort!
             
             logger.debug(f"Got spike counts: {spike_counts_df.shape} rows")
-            
-            spike_counts_array = (
-                spike_counts_df
-                .select('n_spikes_baseline')
-                .to_numpy()
-                .squeeze()
-                .reshape(spike_counts_df.n_unique('trial_index'), spike_counts_df.n_unique('unit_id'))
-            )
-            logger.debug(f"Reshaped spike counts array: {spike_counts_array.shape}")
-            
-            unit_ids = spike_counts_df['unit_id'].unique()
+
             trials = (
                 all_trials
                 .filter(
@@ -473,7 +463,7 @@ def wrap_decoder_helper(
                     # obs_intervals may affect number of trials available
                 )
                 .sort('trial_index')
-                .select('context_name', 'start_time', 'trial_index', 'block_index', 'session_id')
+                .select('rewarded_modality', 'start_time', 'trial_index', 'block_index', 'session_id')
             )
             if (
                 trials['block_index'].n_unique() == 1
@@ -496,7 +486,7 @@ def wrap_decoder_helper(
                         pl.when(pl.col('block_index').mod(2).eq(random.choice([0, 1])))
                         .then(pl.lit('vis'))
                         .otherwise(pl.lit('aud'))
-                        .alias('context_name')
+                        .alias('rewarded_modality')
                     )
                     .sort('trial_index')
                 )
@@ -504,7 +494,7 @@ def wrap_decoder_helper(
                 raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
             logger.debug(f"Got {len(trials)} trials")
 
-            context_labels = trials['context_name'].to_numpy().squeeze()
+            context_labels = trials['rewarded_modality'].to_numpy().squeeze()
 
             max_neg_shift = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
             max_pos_shift = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
@@ -512,9 +502,21 @@ def wrap_decoder_helper(
             logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
 
             for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure} | {session_id}'):
+            
+                filtered_unit_df = spike_counts_df.filter(pl.col('unit_id').is_in(resample_unit_ids[repeat_idx]))
 
-                sel_unit_idx = [unit_ids.index(unit_id) for unit_id in resample_unit_ids[repeat_idx]]
-                    
+                spike_counts_array = (
+                    filtered_unit_df
+                    .select('n_spikes_baseline')
+                    .to_numpy()
+                    .squeeze()
+                    .reshape(filtered_unit_df.n_unique('trial_index'), filtered_unit_df.n_unique('unit_id'))
+                )
+                logger.debug(f"Reshaped spike counts array: {spike_counts_array.shape}")
+                
+                unit_ids = filtered_unit_df['unit_id'].unique(maintain_order=True).to_list()
+                print(unit_ids)
+
                 logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
                 
                 for shift in (*shifts, None): # None will be a special case using all trials, with no shift
@@ -528,12 +530,12 @@ def wrap_decoder_helper(
                         assert first_trial_index >= 0, f"{first_trial_index=}"
                         assert last_trial_index > first_trial_index, f"{last_trial_index=}, {first_trial_index=}"
                         assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
-                        data = spike_counts_array[first_trial_index: last_trial_index, sorted(sel_unit_idx)]
+                        data = spike_counts_array[first_trial_index: last_trial_index, :]
                     else:
                         labels = context_labels
-                        data = spike_counts_array[:, sorted(sel_unit_idx)]
+                        data = spike_counts_array[:, :]
 
-                    assert data.shape == (len(labels), len(sel_unit_idx)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
+                    assert data.shape == (len(labels), len(unit_ids)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
                     logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} context labels")
                     
                     _result = decoder_helper(
@@ -572,7 +574,7 @@ def wrap_decoder_helper(
                         # don't save trial indices for all shifts
                         result['trial_indices'] = None 
                         
-                    result['unit_ids'] = unit_ids.to_numpy()[sorted(sel_unit_idx)].tolist()
+                    result['unit_ids'] = unit_ids
                     result['coefs'] = _result['coefs'][0].tolist()
                     result['is_all_trials'] = is_all_trials
                     results.append(result)
