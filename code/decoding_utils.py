@@ -413,7 +413,7 @@ def wrap_decoder_helper(
     unit_idx = list(range(0, len(unique_unit_ids)))
 
     for repeat_idx in range(params.n_repeats):
-        sel_unit_idx = random.sample(unit_idx, params.n_units_to_use)
+        sel_unit_idx = random.sample(unit_idx, n_units_to_use)
         resample_unit_ids.append(unique_unit_ids[sel_unit_idx])
     resample_unit_ids=np.array(resample_unit_ids)
 
