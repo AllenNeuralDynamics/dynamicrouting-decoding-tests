@@ -413,7 +413,7 @@ def wrap_decoder_helper(
     unit_idx = list(range(0, len(unique_unit_ids)))
 
     for repeat_idx in range(params.n_repeats):
-        sel_unit_idx = random.sample(unit_idx, n_units_to_use)
+        sel_unit_idx = random.sample(unit_idx, params.n_units_to_use)
         resample_unit_ids.append(unique_unit_ids[sel_unit_idx])
     resample_unit_ids=np.array(resample_unit_ids)
 
@@ -510,16 +510,10 @@ def wrap_decoder_helper(
             max_pos_shift = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
             shifts = tuple(range(-max_neg_shift, max_pos_shift + 1))
             logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
-            
-            n_units_to_use = params.unit_subsample_size or len(unit_ids) # if unit_subsample_size is None, use all available
-            
-            unit_idx = list(range(0, len(unit_ids)))
 
             for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure} | {session_id}'):
-                
-                #sel_unit_idx = random.sample(unit_idx, n_units_to_use)
 
-                sel_unit_idx = np.where(np.isin(unit_ids, resample_unit_ids[repeat_idx]))[0]
+                sel_unit_idx = [unit_ids.index(unit_id) for unit_id in resample_unit_ids[repeat_idx]]
                     
                 logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
                 
