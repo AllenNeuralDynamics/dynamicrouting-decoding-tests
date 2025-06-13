@@ -194,6 +194,14 @@ class Params(pydantic_settings.BaseSettings):
                     bin_size=0.5,
                 ),
             ],
+            'binned_stim_0.5': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-1.5,
+                    stop_time=5.5,
+                    bin_size=0.5,
+                ),
+            ],
         }[self.spike_count_intervals]
 
     @pydantic.computed_field(repr=False)
@@ -515,7 +523,6 @@ def wrap_decoder_helper(
                 logger.debug(f"Reshaped spike counts array: {spike_counts_array.shape}")
                 
                 unit_ids = filtered_unit_df['unit_id'].unique(maintain_order=True).to_list()
-                print(unit_ids)
 
                 logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
                 
