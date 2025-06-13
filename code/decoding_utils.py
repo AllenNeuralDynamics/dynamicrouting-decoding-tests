@@ -95,7 +95,7 @@ class Params(pydantic_settings.BaseSettings):
     trials_filter: str | Expr = pydantic.Field(default_factory = lambda:pl.lit(True))
     """ filter trials table input to decoder by boolean column or polars expression"""
 
-    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5'] = 'pre_stim_single_bin'
+    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5','binned_stim_0.5'] = 'pre_stim_single_bin'
 
     @property
     def data_path(self) -> upath.UPath:
