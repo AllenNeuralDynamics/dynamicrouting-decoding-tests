@@ -416,6 +416,11 @@ def wrap_decoder_helper(
                 ).alias("context_appropriate_for_response")
             )
         )
+        #if only one block, this method won't work so cancel for this structure/session
+        if all_trials.n_unique('block_index') != 6:
+            raise NotEnoughBlocksError(f'Expecting 6 blocks for context_appropriate_for_response analysis: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
+
+
     
     # select unit ids for resampling here - keep consistent across time bins
     resample_unit_ids=[]
