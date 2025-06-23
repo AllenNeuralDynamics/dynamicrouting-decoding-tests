@@ -94,7 +94,8 @@ class Params(pydantic_settings.BaseSettings):
 
     trials_filter: str | Expr = pydantic.Field(default_factory = lambda:pl.lit(True))
     """ filter trials table input to decoder by boolean column or polars expression"""
-
+    label_to_decode: str = 'rewarded_modality'
+    """ designate label to decode; corresponds to column in the trials table"""
     spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5','binned_stim_0.5'] = 'pre_stim_single_bin'
 
     @property
@@ -398,6 +399,23 @@ def wrap_decoder_helper(
         .sort('trial_index')
         .collect()
     )
+
+    if params.label_to_decode == 'context_appropriate_for_response':
+        all_trials=(
+            all_trials.filter(
+                pl.col('is_target'),
+                pl.col('is_hit').eq(False)
+            ).with_columns(
+                (((pl.col("is_vis_target")==True) & (pl.col("is_response")==True)) |
+                ((pl.col("is_aud_target")==True) & (pl.col("is_response")==False))
+                ).alias("is_vis_appropriate_response"),
+            ).with_columns(
+                (pl.when(pl.col("is_vis_appropriate_response")==True)
+                    .then(pl.lit("vis"))
+                    .otherwise(pl.lit("aud"))
+                ).alias("context_appropriate_for_response")
+            )
+        )
     
     # select unit ids for resampling here - keep consistent across time bins
     resample_unit_ids=[]
@@ -471,7 +489,7 @@ def wrap_decoder_helper(
                     # obs_intervals may affect number of trials available
                 )
                 .sort('trial_index')
-                .select('rewarded_modality', 'start_time', 'trial_index', 'block_index', 'session_id')
+                .select(params.label_to_decode, 'start_time', 'trial_index', 'block_index', 'session_id')
             )
             if (
                 trials['block_index'].n_unique() == 1
@@ -502,7 +520,7 @@ def wrap_decoder_helper(
                 raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
             logger.debug(f"Got {len(trials)} trials")
 
-            context_labels = trials['rewarded_modality'].to_numpy().squeeze()
+            label_to_decode = trials[params.label_to_decode].to_numpy().squeeze()
 
             max_neg_shift = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
             max_pos_shift = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
@@ -530,7 +548,7 @@ def wrap_decoder_helper(
                     
                     is_all_trials = shift is None
                     if not is_all_trials:
-                        labels = context_labels[max_neg_shift: -max_pos_shift]
+                        labels = label_to_decode[max_neg_shift: -max_pos_shift]
                         first_trial_index = max_neg_shift + shift
                         last_trial_index = len(trials) - max_pos_shift + shift
                         logger.debug(f"Shift {shift}: using trials {first_trial_index} to {last_trial_index} out of {len(trials)}")
@@ -539,11 +557,11 @@ def wrap_decoder_helper(
                         assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
                         data = spike_counts_array[first_trial_index: last_trial_index, :]
                     else:
-                        labels = context_labels
+                        labels = label_to_decode
                         data = spike_counts_array[:, :]
 
                     assert data.shape == (len(labels), len(unit_ids)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
-                    logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} context labels")
+                    logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} labels")
                     
                     _result = decoder_helper(
                         data,
