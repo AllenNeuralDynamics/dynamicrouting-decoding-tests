@@ -79,7 +79,7 @@ class Params(pydantic_settings.BaseSettings):
     """only process areas with at least this many units"""
     input_data_type: Literal['spikes', 'facemap', 'LP'] = 'spikes'
     spikes_time_before: float = pydantic.Field(0.2, deprecated="Use time_interval_config instead")
-    crossval: Literal['5_fold', 'blockwise'] = '5_fold'
+    crossval: Literal['5_fold', 'blockwise', '5_fold_set_random_state'] = '5_fold'
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
     """convert labels (context names) to index [0,1]"""
