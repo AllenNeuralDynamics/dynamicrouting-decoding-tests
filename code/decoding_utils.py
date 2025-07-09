@@ -83,7 +83,7 @@ class Params(pydantic_settings.BaseSettings):
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
     """convert labels (context names) to index [0,1]"""
-    decoder_type: Literal['linearSVC', 'LDA', 'RandomForest', 'LogisticRegression'] = 'LogisticRegression'
+    decoder_type: Literal['linearSVC', 'nonlinearSVC', 'LDA', 'RandomForest', 'LogisticRegression'] = 'LogisticRegression'
     regularization: float | None = None
     """ set regularization (C) for the decoder. Setting to None reverts to the default value (usually 1.0) """
     penalty: str | None = None
@@ -592,6 +592,7 @@ def wrap_decoder_helper(
                     
                     if shift in (0, None):  
                         result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                        result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
                     else:
                         # don't save probabilities from shifts which we won't use 
                         result['predict_proba'] = None 
