@@ -8,6 +8,7 @@
 		"AWS_DEFAULT_REGION",
 		"AWS_SECRET_ACCESS_KEY"
 	],
+	"post_install": true,
 	"options": {
 		"registry_host_arg": true,
 		"git_ask_pass": true
@@ -38,7 +39,7 @@
 				},
 				{
 					"name": "git+https://github.com/AllenInstitute/dynamic_routing_analysis#egg=dynamic-routing-analysis",
-					"version": "5f8121f48fa05deaf8acfa5964e2f8e39703d1e3"
+					"version": "3957eca4bf73c09e8a113b680eef76373a01914f"
 				},
 				{
 					"name": "hdmf",
@@ -54,7 +55,7 @@
 				},
 				{
 					"name": "polars[plot,deltalake]",
-					"version": "1.26.0"
+					"version": "1.32.2"
 				},
 				{
 					"name": "pydantic",
@@ -83,29 +84,6 @@
 			],
 			"options": {},
 			"pre_install_options": {}
-		},
-		"vscode": {
-			"packages": [
-				{
-					"name": "REditorSupport.R"
-				},
-				{
-					"name": "continue.continue"
-				},
-				{
-					"name": "ms-python.python"
-				},
-				{
-					"name": "ms-toolsai.jupyter"
-				},
-				{
-					"name": "reageyao.bioSyntax"
-				},
-				{
-					"name": "saoudrizwan.claude-dev"
-				}
-			],
-			"version": "4.95.3"
 		}
 	},
 	"env_variables": [
