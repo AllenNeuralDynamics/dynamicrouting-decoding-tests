@@ -203,6 +203,22 @@ class Params(pydantic_settings.BaseSettings):
                     bin_size=0.5,
                 ),
             ],
+            'binned_stim_0.1': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-1.5,
+                    stop_time=5.5,
+                    bin_size=0.1,
+                ),
+            ],
+            'binned_stim_0.05': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-1.5,
+                    stop_time=5.5,
+                    bin_size=0.05,
+                ),
+            ],
         }[self.spike_count_intervals]
 
     @pydantic.computed_field(repr=False)
