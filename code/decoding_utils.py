@@ -47,6 +47,14 @@ class BinnedRelativeIntervalConfig(pydantic.BaseModel):
         stop_times = start_times + self.bin_size
         return list(zip(start_times, stop_times))
     
+def to_polars_expr(value: str | pl.Expr) -> Expr:
+    if isinstance(value, pl.Expr):
+        return value
+    """Eval str to create pl.Expr instance"""
+    if "pl." not in value:
+        raise ValueError(f"Polars expression must access Polars objects under the `pl.` namespace {value=}")
+    return eval(value)
+
 class Params(pydantic_settings.BaseSettings):
     # ----------------------------------------------------------------------------------
     # Required parameters
@@ -92,11 +100,14 @@ class Params(pydantic_settings.BaseSettings):
     """ set solver for the decoder. Setting to None reverts to default """
     units_group_by: list[str] = ['session_id', 'structure', 'electrode_group_names']
 
-    trials_filter: str | Expr = pydantic.Field(default_factory = lambda:pl.lit(True))
+    trials_filter: Annotated[str | Expr, pydantic.AfterValidator(to_polars_expr)] = pydantic.Field(default_factory = lambda:pl.lit(True))
     """ filter trials table input to decoder by boolean column or polars expression"""
     label_to_decode: str = 'rewarded_modality'
     """ designate label to decode; corresponds to column in the trials table"""
-    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05'] = 'pre_stim_single_bin'
+    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05'] = 'pre_stim_single_bin'
+    baseline_subtraction: bool = pydantic.Field(False, exclude=True)
+    """whether to subtract the average baseline context modulation from each unit/trial"""
+
 
     @property
     def data_path(self) -> upath.UPath:
@@ -216,6 +227,14 @@ class Params(pydantic_settings.BaseSettings):
                     event_column_name='stim_start_time',
                     start_time=-1.5,
                     stop_time=5.5,
+                    bin_size=0.05,
+                ),
+            ],
+            'binned_stim_only_0.05': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.2,
+                    stop_time=0.7,
                     bin_size=0.05,
                 ),
             ],
@@ -463,42 +482,92 @@ def wrap_decoder_helper(
         sel_unit_idx = random.sample(unit_idx, n_units_to_use)
         resample_unit_ids.append(unique_unit_ids[sel_unit_idx])
     resample_unit_ids=np.array(resample_unit_ids)
+        
 
     for interval_config in params.spike_count_interval_configs:
         for start, stop in interval_config.intervals:
-            spike_counts_df = (
-                utils.get_per_trial_spike_times(
-                    intervals={
-                        'n_spikes_baseline': (
-                            pl.col(interval_config.event_column_name) + start, 
-                            pl.col(interval_config.event_column_name) + stop,
+            
+            #option to subtract trialwise baseline, defined as 500ms before event (stimulus)
+            if params.baseline_subtraction:
+                spike_counts_df = (
+                    utils.get_per_trial_spike_times(
+                        intervals={
+                            'n_spikes_baseline': (
+                                pl.col(interval_config.event_column_name) + -0.5, 
+                                pl.col(interval_config.event_column_name) + 0
+                            ),
+                            'n_spikes_window': (
+                                pl.col(interval_config.event_column_name) + start, 
+                                pl.col(interval_config.event_column_name) + stop,
+                            ),
+                        },
+                        trials_frame=all_trials,
+                        as_counts=True,
+                        unit_ids=(
+                            utils.get_df('units', lazy=True)
+                            .pipe(group_structures)
+                            .filter(
+                                params.units_query,
+                                pl.col('session_id') == session_id,
+                                pl.col('structure') == structure,
+                                pl.col('electrode_group_name').is_in(electrode_group_names),
+                            )
+                            .select('unit_id')
+                            .collect()
+                            ['unit_id']
+                            .unique()
                         ),
-                    },
-                    trials_frame=all_trials,
-                    as_counts=True,
-                    unit_ids=(
-                        utils.get_df('units', lazy=True)
-                        .pipe(group_structures)
-                        .filter(
-                            params.units_query,
-                            pl.col('session_id') == session_id,
-                            pl.col('structure') == structure,
-                            pl.col('electrode_group_name').is_in(electrode_group_names),
-                        )
-                        .select('unit_id')
-                        .collect()
-                        ['unit_id']
-                        .unique()
-                    ),
+                    )
+                    .with_columns(
+                        pl.col('n_spikes_baseline')*2*(stop-start),
+                        #get firing rate, then extrapolate spike counts to the bin size used
+                    )
+                    .with_columns(
+                        pl.col('n_spikes_window').sub(pl.col('n_spikes_baseline'))
+                    )
+                    .filter(
+                        pl.col('n_spikes_window').is_not_null(),
+                        # only keep observed trials
+                    )
+                    .sort('trial_index', 'unit_id') 
                 )
-                .filter(
-                    pl.col('n_spikes_baseline').is_not_null(),
-                    # only keep observed trials
+
+            else:
+
+                spike_counts_df = (
+                    utils.get_per_trial_spike_times(
+                        intervals={
+                            'n_spikes_window': (
+                                pl.col(interval_config.event_column_name) + start, 
+                                pl.col(interval_config.event_column_name) + stop,
+                            ),
+                        },
+                        trials_frame=all_trials,
+                        as_counts=True,
+                        unit_ids=(
+                            utils.get_df('units', lazy=True)
+                            .pipe(group_structures)
+                            .filter(
+                                params.units_query,
+                                pl.col('session_id') == session_id,
+                                pl.col('structure') == structure,
+                                pl.col('electrode_group_name').is_in(electrode_group_names),
+                            )
+                            .select('unit_id')
+                            .collect()
+                            ['unit_id']
+                            .unique()
+                        ),
+                    )
+                    .filter(
+                        pl.col('n_spikes_window').is_not_null(),
+                        # only keep observed trials
+                    )
+                    .sort('trial_index', 'unit_id') 
                 )
-                .sort('trial_index', 'unit_id') 
-            )
-            # len == n_units x n_trials, with spike counts in a column
-            # sequence of unit_ids is used later: don't re-sort!
+                # len == n_units x n_trials, with spike counts in a column
+                # sequence of unit_ids is used later: don't re-sort!
+
             
             logger.debug(f"Got spike counts: {spike_counts_df.shape} rows")
 
@@ -554,7 +623,7 @@ def wrap_decoder_helper(
 
                 spike_counts_array = (
                     filtered_unit_df
-                    .select('n_spikes_baseline')
+                    .select('n_spikes_window')
                     .to_numpy()
                     .squeeze()
                     .reshape(filtered_unit_df.n_unique('trial_index'), filtered_unit_df.n_unique('unit_id'))
@@ -607,8 +676,14 @@ def wrap_decoder_helper(
                     result['repeat_idx'] = repeat_idx
                     
                     if shift in (0, None):  
-                        result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
-                        result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                        if params.label_to_decode=="is_response":
+                            result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
+                            result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
+                        elif params.label_to_decode in ["rewarded_modality","context_appropriate_for_response"]:
+                            result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                            result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                        else:
+                            logger.exception(f'{session_id} | Failed: decoding unknown column')
                     else:
                         # don't save probabilities from shifts which we won't use 
                         result['predict_proba'] = None 
