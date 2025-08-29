@@ -45,13 +45,6 @@
 			"default_value": "loose_drift"
 		},
 		{
-			"id": "TodaD5cDUuK1OCzO",
-			"name": "unit_subsample_size",
-			"param_name": "unit_subsample_size",
-			"type": "text",
-			"value_type": "integer"
-		},
-		{
 			"id": "CLnGBLMVID8fEr6c",
 			"name": "session_table_query",
 			"param_name": "session_table_query",
@@ -59,6 +52,73 @@
 			"type": "text",
 			"value_type": "string",
 			"default_value": "is_ephys \u0026 is_task \u0026 is_annotated \u0026 is_production \u0026 issues=='[]'"
+		},
+		{
+			"id": "TodaD5cDUuK1OCzO",
+			"name": "unit_subsample_size",
+			"param_name": "unit_subsample_size",
+			"type": "text",
+			"value_type": "integer"
+		},
+		{
+			"id": "TUXEqjR81f7FWY13",
+			"name": "min_n_units",
+			"param_name": "min_n_units",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "20"
+		},
+		{
+			"id": "UyUIhDkz8iSRHDnc",
+			"name": "n_repeats",
+			"param_name": "n_repeats",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "25"
+		},
+		{
+			"id": "exDAGscNDd2rht1z",
+			"name": "decoder_type",
+			"param_name": "decoder_type",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "LogisticRegression"
+		},
+		{
+			"id": "GTjYX29WAxkyBnRl",
+			"name": "baseline_subtraction",
+			"param_name": "baseline_subtraction",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "0",
+			"minimum": 0,
+			"maximum": 1
+		},
+		{
+			"id": "HfnBe3exbfyVCqyC",
+			"name": "spike_count_intervals",
+			"param_name": "spike_count_intervals",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "pre_stim_single_bin"
+		},
+		{
+			"id": "dAX7xOci1kz63uBd",
+			"name": "label_to_decode",
+			"param_name": "label_to_decode",
+			"type": "text",
+			"value_type": "string",
+			"default_value": "rewarded_modality"
+		},
+		{
+			"id": "HroGtR2BG56RyURY",
+			"name": "use_cumulative_spike_counts",
+			"param_name": "use_cumulative_spike_counts",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "0",
+			"minimum": 0,
+			"maximum": 1
 		},
 		{
 			"id": "5Lq8N5fGlmWi7M3Z",
@@ -99,14 +159,6 @@
 			"maximum": 1
 		},
 		{
-			"id": "exDAGscNDd2rht1z",
-			"name": "decoder_type",
-			"param_name": "decoder_type",
-			"type": "text",
-			"value_type": "string",
-			"default_value": "LogisticRegression"
-		},
-		{
 			"id": "mEO7YbVSqdrSMD9O",
 			"name": "use_process_pool",
 			"param_name": "use_process_pool",
@@ -128,14 +180,6 @@
 			"param_name": "n_jobs",
 			"type": "text",
 			"value_type": "integer"
-		},
-		{
-			"id": "HfnBe3exbfyVCqyC",
-			"name": "spike_count_intervals",
-			"param_name": "spike_count_intervals",
-			"type": "text",
-			"value_type": "string",
-			"default_value": "pre_stim_single_bin"
 		}
 	]
 }

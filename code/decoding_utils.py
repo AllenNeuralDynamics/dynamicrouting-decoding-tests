@@ -83,7 +83,7 @@ class Params(pydantic_settings.BaseSettings):
     """number of units to sample for each area"""
     n_repeats: int = 25
     """number of times to repeat decoding with different randomly sampled units"""
-    min_n_units: int = 5 
+    min_n_units: int = 20
     """only process areas with at least this many units"""
     input_data_type: Literal['spikes', 'facemap', 'LP'] = 'spikes'
     spikes_time_before: float = pydantic.Field(0.2, deprecated="Use time_interval_config instead")
@@ -104,9 +104,13 @@ class Params(pydantic_settings.BaseSettings):
     """ filter trials table input to decoder by boolean column or polars expression"""
     label_to_decode: str = 'rewarded_modality'
     """ designate label to decode; corresponds to column in the trials table"""
-    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05'] = 'pre_stim_single_bin'
-    baseline_subtraction: bool = pydantic.Field(False, exclude=True)
+    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05','binned_stim_only_0.01'] = 'pre_stim_single_bin'
+    baseline_subtraction: bool = False
     """whether to subtract the average baseline context modulation from each unit/trial"""
+    n_blocks_expected: int = 6
+    """ set number of blocks expected - defaults to 6"""
+    use_cumulative_spike_counts: bool = False
+    """ toggle using cumulative spike counts from start of first interval for decoding"""
 
 
     @property
@@ -236,6 +240,14 @@ class Params(pydantic_settings.BaseSettings):
                     start_time=-0.2,
                     stop_time=0.7,
                     bin_size=0.05,
+                ),
+            ],
+            'binned_stim_only_0.01': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.1,
+                    stop_time=0.6,
+                    bin_size=0.01,
                 ),
             ],
         }[self.spike_count_intervals]
@@ -487,6 +499,11 @@ def wrap_decoder_helper(
     for interval_config in params.spike_count_interval_configs:
         for start, stop in interval_config.intervals:
             
+            #option to use cumulative spike counts
+            #change start to equal the start of the first interval
+            if params.use_cumulative_spike_counts:
+                start=interval_config.intervals[0][0]
+
             #option to subtract trialwise baseline, defined as 500ms before event (stimulus)
             if params.baseline_subtraction:
                 spike_counts_df = (
@@ -606,8 +623,8 @@ def wrap_decoder_helper(
                     )
                     .sort('trial_index')
                 )
-            if trials.n_unique('block_index') != 6:
-                raise NotEnoughBlocksError(f'Expecting 6 blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
+            if trials.n_unique('block_index') != params.n_blocks_expected:
+                raise NotEnoughBlocksError(f'Expecting {params.n_blocks_expected} blocks: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
             logger.debug(f"Got {len(trials)} trials")
 
             label_to_decode = trials[params.label_to_decode].to_numpy().squeeze()

@@ -18,6 +18,7 @@ from typing import Annotated, Literal
 # 3rd-party imports necessary for processing ----------------------- #
 import matplotlib
 import pandas as pd
+import polars as pl
 import upath
 
 # local modules ---------------------------------------------------- #
