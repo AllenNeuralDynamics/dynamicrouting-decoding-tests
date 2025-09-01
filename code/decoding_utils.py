@@ -104,13 +104,15 @@ class Params(pydantic_settings.BaseSettings):
     """ filter trials table input to decoder by boolean column or polars expression"""
     label_to_decode: str = 'rewarded_modality'
     """ designate label to decode; corresponds to column in the trials table"""
-    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05','binned_stim_only_0.01'] = 'pre_stim_single_bin'
+    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05','binned_stim_only_0.025','binned_stim_only_0.02','binned_stim_only_0.01'] = 'pre_stim_single_bin'
     baseline_subtraction: bool = False
     """whether to subtract the average baseline context modulation from each unit/trial"""
     n_blocks_expected: int = 6
     """ set number of blocks expected - defaults to 6"""
     use_cumulative_spike_counts: bool = False
     """ toggle using cumulative spike counts from start of first interval for decoding"""
+    sliding_window_size: float | None = None
+    """ set sliding time window size if different from step size in spike_count_intervals """
 
 
     @property
@@ -237,9 +239,25 @@ class Params(pydantic_settings.BaseSettings):
             'binned_stim_only_0.05': [
                 BinnedRelativeIntervalConfig(
                     event_column_name='stim_start_time',
-                    start_time=-0.2,
-                    stop_time=0.7,
+                    start_time=-0.1,
+                    stop_time=0.6,
                     bin_size=0.05,
+                ),
+            ],
+            'binned_stim_only_0.025': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.1,
+                    stop_time=0.6,
+                    bin_size=0.025,
+                ),
+            ],
+            'binned_stim_only_0.02': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.1,
+                    stop_time=0.6,
+                    bin_size=0.02,
                 ),
             ],
             'binned_stim_only_0.01': [
@@ -501,8 +519,20 @@ def wrap_decoder_helper(
             
             #option to use cumulative spike counts
             #change start to equal the start of the first interval
+            if params.use_cumulative_spike_counts and params.sliding_window_size is not None:
+                 logger.exception(f'cumulative_spike_counts and sliding_window_size are incompatible, select only one to use')
+
             if params.use_cumulative_spike_counts:
+                start_original=np.copy(start)
                 start=interval_config.intervals[0][0]
+            
+            elif params.sliding_window_size is not None:
+                start_original=np.copy(start)
+                stop_original=np.copy(stop)
+                start=start-(params.sliding_window_size/2)
+                stop=stop+(params.sliding_window_size/2)
+                #start=stop-params.sliding_window_size
+                
 
             #option to subtract trialwise baseline, defined as 500ms before event (stimulus)
             if params.baseline_subtraction:
@@ -688,7 +718,13 @@ def wrap_decoder_helper(
                     result['balanced_accuracy_train'] = _result['balanced_accuracy_train'].item()
                     result['time_aligned_to'] = interval_config.event_column_name
                     result['bin_size'] = interval_config.bin_size
-                    result['bin_center'] = (start + stop) / 2
+                    if params.use_cumulative_spike_counts:
+                        result['bin_center'] = (start_original + stop) / 2
+                    elif params.sliding_window_size is not None:
+                        result['bin_center'] = (start_original + stop_original) / 2
+                        #result['bin_center'] = stop
+                    else:
+                        result['bin_center'] = (start + stop) / 2
                     result['shift_idx'] = shift
                     result['repeat_idx'] = repeat_idx
                     
