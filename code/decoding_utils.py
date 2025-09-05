@@ -113,6 +113,8 @@ class Params(pydantic_settings.BaseSettings):
     """ toggle using cumulative spike counts from start of first interval for decoding"""
     sliding_window_size: float | None = None
     """ set sliding time window size if different from step size in spike_count_intervals """
+    linear_shift: bool = True
+    """ toggle linear shift (if False, only runs decoding on aligned trials/ephys) """
 
 
     @property
@@ -265,6 +267,14 @@ class Params(pydantic_settings.BaseSettings):
                     event_column_name='stim_start_time',
                     start_time=-0.1,
                     stop_time=0.6,
+                    bin_size=0.01,
+                ),
+            ],
+            'binned_stim_onset_only_0.01': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.05,
+                    stop_time=0.3,
                     bin_size=0.01,
                 ),
             ],
@@ -628,6 +638,7 @@ def wrap_decoder_helper(
                 .sort('trial_index')
                 .select(params.label_to_decode, 'start_time', 'trial_index', 'block_index', 'session_id')
             )
+
             if (
                 trials['block_index'].n_unique() == 1
                 and not (
@@ -658,9 +669,13 @@ def wrap_decoder_helper(
             logger.debug(f"Got {len(trials)} trials")
 
             label_to_decode = trials[params.label_to_decode].to_numpy().squeeze()
-
-            max_neg_shift = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
-            max_pos_shift = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
+            
+            if params.linear_shift:
+                max_neg_shift = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
+                max_pos_shift = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
+            else:
+                max_neg_shift = 0
+                max_pos_shift = 1
             shifts = tuple(range(-max_neg_shift, max_pos_shift + 1))
             logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
 
@@ -685,6 +700,8 @@ def wrap_decoder_helper(
                     
                     is_all_trials = shift is None
                     if not is_all_trials:
+                        #if not params.linear_shift:
+                            #continue
                         labels = label_to_decode[max_neg_shift: -max_pos_shift]
                         first_trial_index = max_neg_shift + shift
                         last_trial_index = len(trials) - max_pos_shift + shift
@@ -699,7 +716,7 @@ def wrap_decoder_helper(
 
                     assert data.shape == (len(labels), len(unit_ids)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
                     logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} labels")
-                    
+
                     _result = decoder_helper(
                         data,
                         labels,
@@ -729,9 +746,16 @@ def wrap_decoder_helper(
                     result['repeat_idx'] = repeat_idx
                     
                     if shift in (0, None):  
-                        if params.label_to_decode=="is_response":
+                        if params.label_to_decode=="is_response" or params.label_to_decode=="is_target":
                             result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
                             result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
+                        elif params.label_to_decode=="stim_name":
+                            if 'vis1' in _result['label_names']:
+                                temp_target_label='vis1'
+                            elif 'sound1' in _result['label_names']:
+                                temp_target_label='sound1'
+                            result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
+                            result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
                         elif params.label_to_decode in ["rewarded_modality","context_appropriate_for_response"]:
                             result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
                             result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()

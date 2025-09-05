@@ -57,7 +57,7 @@ def main():
             result_prefix=f"test/{params.result_prefix}",
             min_n_units=20,
             n_repeats=1,
-            trials_filter=pl.col('is_vis_target'),
+            trials_filter=pl.col('is_aud_stim'),
         )
         logger.info("Test mode: using modified set of parameters")
         
