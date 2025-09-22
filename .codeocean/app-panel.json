@@ -121,6 +121,26 @@
 			"maximum": 1
 		},
 		{
+			"id": "5Q5e3xQu7oDoqDK2",
+			"name": "linear_shift",
+			"param_name": "linear_shift",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "1",
+			"minimum": 0,
+			"maximum": 1
+		},
+		{
+			"id": "1v8klUDI43YCHT71",
+			"name": "n_blocks_expected",
+			"param_name": "n_blocks_expected",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "6",
+			"minimum": 1,
+			"maximum": 6
+		},
+		{
 			"id": "5Lq8N5fGlmWi7M3Z",
 			"name": "override_params_json",
 			"param_name": "override_params_json",
