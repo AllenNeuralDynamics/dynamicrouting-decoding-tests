@@ -539,8 +539,8 @@ def wrap_decoder_helper(
             elif params.sliding_window_size is not None:
                 start_original=np.copy(start)
                 stop_original=np.copy(stop)
-                start=start-(params.sliding_window_size/2)
-                stop=stop+(params.sliding_window_size/2)
+                start=(start+stop)/2-(params.sliding_window_size/2)
+                stop=(start+stop)/2+(params.sliding_window_size/2)
                 #start=stop-params.sliding_window_size
                 
 
@@ -750,12 +750,23 @@ def wrap_decoder_helper(
                             result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
                             result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
                         elif params.label_to_decode=="stim_name":
-                            if 'vis1' in _result['label_names']:
-                                temp_target_label='vis1'
-                            elif 'sound1' in _result['label_names']:
-                                temp_target_label='sound1'
-                            result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
-                            result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
+                            #if decoding only 2 stimuli
+                            if len(_result['label_names'])==2: 
+                                if 'vis1' in _result['label_names']:
+                                    temp_target_label='vis1'
+                                elif 'sound1' in _result['label_names']:
+                                    temp_target_label='sound1'
+                                result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
+                                result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
+                            #if decoding all 4 stimuli
+                            elif len(_result['label_names'])==4:
+                                predict_proba_multiclass=np.full((len(labels),4),np.nan)
+                                predict_proba_all_trials_multiclass=np.full((len(labels),4),np.nan)
+                                stim_order=['sound1','sound2','vis1','vis2']
+                                for ss,stim_label in enumerate(stim_order):
+                                    result['predict_proba_'+stim_label] = _result['predict_proba'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
+                                    result['predict_proba_all_trials_'+stim_label] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
+
                         elif params.label_to_decode in ["rewarded_modality","context_appropriate_for_response"]:
                             result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
                             result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
