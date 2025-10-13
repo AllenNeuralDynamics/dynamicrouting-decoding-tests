@@ -200,6 +200,20 @@ class Params(pydantic_settings.BaseSettings):
                     bin_size=0.2,
                 ),
             ],
+            'binned_stim_and_response_0.025': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.1,
+                    stop_time=2.0,
+                    bin_size=0.025,
+                ),
+                BinnedRelativeIntervalConfig(
+                    event_column_name='response_time',
+                    start_time=-0.1,
+                    stop_time=2.0,
+                    bin_size=0.025,
+                ),
+            ],
             'binned_stim_and_response_0.5': [
                 BinnedRelativeIntervalConfig(
                     event_column_name='stim_start_time',
