@@ -297,6 +297,9 @@ def insert_is_observed(
         )
     if "obs_intervals" not in units_schema:
         raise ValueError("units_frame must contain 'obs_intervals' column")
+    
+    if units_lf.select('structure')[0]=='ORBl':
+        print('using ORBl units')
 
     unit_ids = units_lf.select(unit_id_col).collect().get_column(unit_id_col).unique()
     intervals_schema = intervals_lf.collect_schema()

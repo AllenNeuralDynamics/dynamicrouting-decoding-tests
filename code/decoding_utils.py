@@ -208,9 +208,9 @@ class Params(pydantic_settings.BaseSettings):
                     bin_size=0.025,
                 ),
                 BinnedRelativeIntervalConfig(
-                    event_column_name='response_time',
-                    start_time=-0.1,
-                    stop_time=2.0,
+                    event_column_name='response_or_reward_time',
+                    start_time=-1.0,
+                    stop_time=1.0,
                     bin_size=0.025,
                 ),
             ],
@@ -222,7 +222,7 @@ class Params(pydantic_settings.BaseSettings):
                     bin_size=0.5,
                 ),
                 BinnedRelativeIntervalConfig(
-                    event_column_name='response_time',
+                    event_column_name='response_or_reward_time',
                     start_time=-2.5,
                     stop_time=4.5,
                     bin_size=0.5,
@@ -294,7 +294,7 @@ class Params(pydantic_settings.BaseSettings):
             ],
             'binned_response_0.025': [
                 BinnedRelativeIntervalConfig(
-                    event_column_name='response_time',
+                    event_column_name='response_or_reward_time',
                     start_time=-1.0,
                     stop_time=1.0,
                     bin_size=0.025,
@@ -486,10 +486,15 @@ def wrap_decoder_helper(
 ) -> None:
     logger.debug(f"Getting units and trials for {session_id} {structure}")
     results = []
+
     all_trials = (
         utils.get_df('trials', lazy=True)
         .filter(
             pl.col('session_id') == session_id,
+        ).with_columns( #make new columns for is_response_or_reward and response_or_reward_time
+            pl.min_horizontal('response_time','reward_time').alias('response_or_reward_time'),
+            (pl.col('response_time').is_not_null() | pl.col('reward_time').is_not_null()).alias('is_response_or_reward')
+        ).filter(
             params.trials_filter,
             # obs_intervals may affect number of trials available
         )
@@ -561,8 +566,8 @@ def wrap_decoder_helper(
             elif params.sliding_window_size is not None:
                 start_original=np.copy(start)
                 stop_original=np.copy(stop)
-                start=(start+stop)/2-(params.sliding_window_size/2)
-                stop=(start+stop)/2+(params.sliding_window_size/2)
+                start=(start_original+stop_original)/2-(params.sliding_window_size/2)
+                stop=(start_original+stop_original)/2+(params.sliding_window_size/2)
                 #start=stop-params.sliding_window_size
                 
 
