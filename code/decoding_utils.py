@@ -104,7 +104,7 @@ class Params(pydantic_settings.BaseSettings):
     """ filter trials table input to decoder by boolean column or polars expression"""
     label_to_decode: str = 'rewarded_modality'
     """ designate label to decode; corresponds to column in the trials table"""
-    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.025', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05','binned_stim_only_0.025','binned_stim_only_0.02','binned_stim_only_0.01','binned_stim_onset_only_0.01','binned_response_0.025','binned_prestim_0.1'] = 'pre_stim_single_bin'
+    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.025', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05','binned_stim_only_0.025','binned_stim_only_0.02','binned_stim_only_0.01','binned_stim_only_0.005','binned_stim_onset_only_0.01','binned_response_0.025','binned_prestim_0.1'] = 'pre_stim_single_bin'
     baseline_subtraction: bool = False
     """whether to subtract the average baseline context modulation from each unit/trial"""
     n_blocks_expected: int = 6
@@ -284,12 +284,28 @@ class Params(pydantic_settings.BaseSettings):
                     bin_size=0.01,
                 ),
             ],
+            'binned_stim_only_0.005': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.1,
+                    stop_time=0.6,
+                    bin_size=0.005,
+                ),
+            ],
             'binned_stim_onset_only_0.01': [
                 BinnedRelativeIntervalConfig(
                     event_column_name='stim_start_time',
                     start_time=-0.05,
                     stop_time=0.3,
                     bin_size=0.01,
+                ),
+            ],
+            'binned_stim_onset_only_0.005': [
+                BinnedRelativeIntervalConfig(
+                    event_column_name='stim_start_time',
+                    start_time=-0.05,
+                    stop_time=0.3,
+                    bin_size=0.005,
                 ),
             ],
             'binned_response_0.025': [
@@ -782,11 +798,15 @@ def wrap_decoder_helper(
                     
                     if shift in (0, None):  
                         if params.label_to_decode in ["is_response", "is_target", "is_rewarded"]:
+                            result['decision_function'] = _result['decision_function'].tolist()
+                            result['decision_function_all'] = _result['decision_function_all'].tolist()
                             result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
                             result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
                         elif params.label_to_decode=="stim_name":
                             #if decoding only 2 stimuli
                             if len(_result['label_names'])==2: 
+                                result['decision_function'] = _result['decision_function'].tolist()
+                                result['decision_function_all'] = _result['decision_function_all'].tolist()
                                 if 'vis1' in _result['label_names']:
                                     temp_target_label='vis1'
                                 elif 'sound1' in _result['label_names']:
@@ -799,10 +819,14 @@ def wrap_decoder_helper(
                                 predict_proba_all_trials_multiclass=np.full((len(labels),4),np.nan)
                                 stim_order=['sound1','sound2','vis1','vis2']
                                 for ss,stim_label in enumerate(stim_order):
+                                    result['decision_function_'+stim_label] = _result['decision_function'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
+                                    result['decision_function_all_'+stim_label] = _result['decision_function_all'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
                                     result['predict_proba_'+stim_label] = _result['predict_proba'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
                                     result['predict_proba_all_trials_'+stim_label] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
 
                         elif params.label_to_decode in ["rewarded_modality","context_appropriate_for_response"]:
+                            result['decision_function'] = _result['decision_function'].tolist()
+                            result['decision_function_all'] = _result['decision_function_all'].tolist()
                             result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
                             result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
                         else:
@@ -810,6 +834,9 @@ def wrap_decoder_helper(
                     else:
                         # don't save probabilities from shifts which we won't use 
                         result['predict_proba'] = None 
+                        result['predict_proba_all_trials'] = None
+                        result['decision_function'] = None
+                        result['decision_function_all'] = None 
                         
                     if is_all_trials:
                         result['trial_indices'] = trials['trial_index'].to_list()
