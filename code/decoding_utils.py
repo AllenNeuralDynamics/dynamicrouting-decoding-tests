@@ -104,7 +104,7 @@ class Params(pydantic_settings.BaseSettings):
     """ filter trials table input to decoder by boolean column or polars expression"""
     label_to_decode: str = 'rewarded_modality'
     """ designate label to decode; corresponds to column in the trials table"""
-    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.025', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05','binned_stim_only_0.025','binned_stim_only_0.02','binned_stim_only_0.01','binned_stim_only_0.005','binned_stim_onset_only_0.01','binned_response_0.025','binned_prestim_0.1'] = 'pre_stim_single_bin'
+    spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.025', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05','binned_stim_only_0.025','binned_stim_only_0.02','binned_stim_only_0.01','binned_stim_only_0.005','binned_stim_onset_only_0.01','binned_stim_onset_only_0.005','binned_response_0.025','binned_prestim_0.1'] = 'pre_stim_single_bin'
     baseline_subtraction: bool = False
     """whether to subtract the average baseline context modulation from each unit/trial"""
     n_blocks_expected: int = 6
@@ -720,6 +720,11 @@ def wrap_decoder_helper(
             logger.debug(f"Got {len(trials)} trials")
 
             label_to_decode = trials[params.label_to_decode].to_numpy().squeeze()
+
+            if params.crossval=='blockwise':
+                crossval_index=trials['block_index'].to_numpy().squeeze()
+            else:
+                crossval_index=None
             
             if params.linear_shift:
                 max_neg_shift = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
@@ -773,7 +778,7 @@ def wrap_decoder_helper(
                         labels,
                         decoder_type=params.decoder_type,
                         crossval=params.crossval,
-                        crossval_index=None,
+                        crossval_index=crossval_index,
                         labels_as_index=params.labels_as_index,
                         train_test_split_input=None,
                         regularization=params.regularization,
@@ -786,6 +791,7 @@ def wrap_decoder_helper(
                     result['balanced_accuracy_train'] = _result['balanced_accuracy_train'].item()
                     result['time_aligned_to'] = interval_config.event_column_name
                     result['bin_size'] = interval_config.bin_size
+                    result['sliding_window_size'] = params.sliding_window_size
                     if params.use_cumulative_spike_counts:
                         result['bin_center'] = stop
                     elif params.sliding_window_size is not None:
