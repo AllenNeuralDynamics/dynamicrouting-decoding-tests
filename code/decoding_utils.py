@@ -532,40 +532,47 @@ def wrap_decoder_helper(
     if params.test_on_spontaneous:
         #make random seed from the session id for consistency
         random_seed = int(session_id.replace('_','').replace('-',''))
-        spont_trials = pl.from_pandas(data_utils.generate_spontaneous_trials_table(session_id,distribution='DR',random_seed=random_seed))
-        interval_bin_size = params.spike_count_interval_configs[0].bin_size
-        spike_counts_spont_df = (
-            utils.get_per_trial_spike_times(
-                intervals={
-                    'n_spikes_window': (
-                        pl.col('start_time') + 0, 
-                        pl.col('start_time') + interval_bin_size,
+        spont_flag=True
+        try:
+            spont_trials = pl.from_pandas(data_utils.generate_spontaneous_trials_table(session_id,distribution='DR',random_seed=random_seed))
+            interval_bin_size = params.spike_count_interval_configs[0].bin_size
+            spike_counts_spont_df = (
+                utils.get_per_trial_spike_times(
+                    intervals={
+                        'n_spikes_window': (
+                            pl.col('start_time') + 0, 
+                            pl.col('start_time') + interval_bin_size,
+                        ),
+                    },
+                    trials_frame=spont_trials,
+                    as_counts=True,
+                    unit_ids=(
+                        utils.get_df('units', lazy=True)
+                        .pipe(group_structures)
+                        .filter(
+                            params.units_query,
+                            pl.col('session_id') == session_id,
+                            pl.col('structure') == structure,
+                            pl.col('electrode_group_name').is_in(electrode_group_names),
+                        )
+                        .select('unit_id')
+                        .collect()
+                        ['unit_id']
+                        .unique()
                     ),
-                },
-                trials_frame=spont_trials,
-                as_counts=True,
-                unit_ids=(
-                    utils.get_df('units', lazy=True)
-                    .pipe(group_structures)
-                    .filter(
-                        params.units_query,
-                        pl.col('session_id') == session_id,
-                        pl.col('structure') == structure,
-                        pl.col('electrode_group_name').is_in(electrode_group_names),
-                    )
-                    .select('unit_id')
-                    .collect()
-                    ['unit_id']
-                    .unique()
-                ),
+                )
+                .filter(
+                    pl.col('n_spikes_window').is_not_null(),
+                    # only keep observed trials
+                )
+                .sort('trial_index', 'unit_id') 
             )
-            .filter(
-                pl.col('n_spikes_window').is_not_null(),
-                # only keep observed trials
-            )
-            .sort('trial_index', 'unit_id') 
-        )
+        except:
+            spont_flag=False
+            spont_data=None
+        
     else:
+        spont_flag=False
         spont_data = None
 
 
@@ -791,7 +798,7 @@ def wrap_decoder_helper(
 
                 logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
 
-                if params.test_on_spontaneous:
+                if spont_flag:
                     filtered_spont_unit_df=spike_counts_spont_df.filter(pl.col('unit_id').is_in(resample_unit_ids[repeat_idx]))
                     spont_data = (
                         filtered_spont_unit_df
@@ -901,7 +908,7 @@ def wrap_decoder_helper(
                             result['spont_trial_times'] = spont_trials['start_time'].to_list()
                             result['spont_epoch_name'] = spont_trials['epoch_name'].to_list()
                             result['spont_trial_is_rewarded'] = spont_trials['is_rewarded'].to_list()
-                            
+
                     else:
                         # don't save probabilities from shifts which we won't use 
                         result['predict_proba'] = None 
