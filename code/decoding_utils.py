@@ -26,6 +26,7 @@ import pydantic.functional_serializers
 import tqdm
 import upath
 from dynamic_routing_analysis.decoding_utils import decoder_helper, NotEnoughBlocksError
+from dynamic_routing_analysis import data_utils
 
 import utils
 
@@ -115,6 +116,8 @@ class Params(pydantic_settings.BaseSettings):
     """ set sliding time window size if different from step size in spike_count_intervals """
     linear_shift: bool = True
     """ toggle linear shift (if False, only runs decoding on aligned trials/ephys) """
+    test_on_spontaneous: bool = False
+    """ toggle testing the decoder model (trained on the full task) on spontaneous activity """
 
 
     @property
@@ -526,6 +529,47 @@ def wrap_decoder_helper(
         .collect()
     )
 
+    if params.test_on_spontaneous:
+        #make random seed from the session id for consistency
+        random_seed = int(session_id.replace('_','').replace('-',''))
+        spont_trials = pl.from_pandas(data_utils.generate_spontaneous_trials_table(session_id,distribution='DR',random_seed=random_seed))
+        interval_bin_size = params.spike_count_interval_configs[0].bin_size
+        spike_counts_spont_df = (
+            utils.get_per_trial_spike_times(
+                intervals={
+                    'n_spikes_window': (
+                        pl.col('start_time') + 0, 
+                        pl.col('start_time') + interval_bin_size,
+                    ),
+                },
+                trials_frame=spont_trials,
+                as_counts=True,
+                unit_ids=(
+                    utils.get_df('units', lazy=True)
+                    .pipe(group_structures)
+                    .filter(
+                        params.units_query,
+                        pl.col('session_id') == session_id,
+                        pl.col('structure') == structure,
+                        pl.col('electrode_group_name').is_in(electrode_group_names),
+                    )
+                    .select('unit_id')
+                    .collect()
+                    ['unit_id']
+                    .unique()
+                ),
+            )
+            .filter(
+                pl.col('n_spikes_window').is_not_null(),
+                # only keep observed trials
+            )
+            .sort('trial_index', 'unit_id') 
+        )
+    else:
+        spont_data = None
+
+
+
     if params.label_to_decode == 'context_appropriate_for_response':
         all_trials=(
             all_trials.filter(
@@ -721,11 +765,6 @@ def wrap_decoder_helper(
 
             label_to_decode = trials[params.label_to_decode].to_numpy().squeeze()
 
-            if params.crossval=='blockwise':
-                crossval_index=trials['block_index'].to_numpy().squeeze()
-            else:
-                crossval_index=None
-            
             if params.linear_shift:
                 max_neg_shift = math.ceil(len(trials.filter(pl.col('block_index')==0))/2)
                 max_pos_shift = math.floor(len(trials.filter(pl.col('block_index')==5))/2)
@@ -751,6 +790,16 @@ def wrap_decoder_helper(
                 unit_ids = filtered_unit_df['unit_id'].unique(maintain_order=True).to_list()
 
                 logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
+
+                if params.test_on_spontaneous:
+                    filtered_spont_unit_df=spike_counts_spont_df.filter(pl.col('unit_id').is_in(resample_unit_ids[repeat_idx]))
+                    spont_data = (
+                        filtered_spont_unit_df
+                        .select('n_spikes_window')
+                        .to_numpy()
+                        .squeeze()
+                        .reshape(filtered_spont_unit_df.n_unique('trial_index'), filtered_spont_unit_df.n_unique('unit_id'))
+                    )
                 
                 for shift in (*shifts, None): # None will be a special case using all trials, with no shift
                     
@@ -759,6 +808,10 @@ def wrap_decoder_helper(
                         #if not params.linear_shift:
                             #continue
                         labels = label_to_decode[max_neg_shift: -max_pos_shift]
+                        if params.crossval=='blockwise':
+                            crossval_index=trials['block_index'].to_numpy().squeeze()[max_neg_shift: -max_pos_shift]
+                        else:
+                            crossval_index=None
                         first_trial_index = max_neg_shift + shift
                         last_trial_index = len(trials) - max_pos_shift + shift
                         logger.debug(f"Shift {shift}: using trials {first_trial_index} to {last_trial_index} out of {len(trials)}")
@@ -768,6 +821,7 @@ def wrap_decoder_helper(
                         data = spike_counts_array[first_trial_index: last_trial_index, :]
                     else:
                         labels = label_to_decode
+                        crossval_index=trials['block_index'].to_numpy().squeeze()
                         data = spike_counts_array[:, :]
 
                     assert data.shape == (len(labels), len(unit_ids)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
@@ -785,6 +839,7 @@ def wrap_decoder_helper(
                         penalty=params.penalty,
                         solver=params.solver,
                         n_jobs=None,
+                        other_data=spont_data,
                     )
                     result = {}
                     result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
@@ -801,8 +856,9 @@ def wrap_decoder_helper(
                         result['bin_center'] = (start + stop) / 2
                     result['shift_idx'] = shift
                     result['repeat_idx'] = repeat_idx
+                    result['labels'] = _result['labels'].tolist()
                     
-                    if shift in (0, None):  
+                    if shift in (0, None):
                         if params.label_to_decode in ["is_response", "is_target", "is_rewarded"]:
                             result['decision_function'] = _result['decision_function'].tolist()
                             result['decision_function_all'] = _result['decision_function_all'].tolist()
@@ -837,6 +893,15 @@ def wrap_decoder_helper(
                             result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
                         else:
                             logger.exception(f'{session_id} | Failed: decoding unknown column')
+
+                        if spont_data is not None: #save predictions about spont data plus relevant trial info
+                            result['predict_proba_spont'] = _result['predict_proba_other'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                            result['decision_function_spont'] = _result['decision_function_other'].tolist()
+                            result['pred_label_spont'] = _result['label_names'][_result['pred_label_other']].tolist()
+                            result['spont_trial_times'] = spont_trials['start_time'].to_list()
+                            result['spont_epoch_name'] = spont_trials['epoch_name'].to_list()
+                            result['spont_trial_is_rewarded'] = spont_trials['is_rewarded'].to_list()
+                            
                     else:
                         # don't save probabilities from shifts which we won't use 
                         result['predict_proba'] = None 

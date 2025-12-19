@@ -1,17 +1,11 @@
 {
 	"version": 1,
 	"base_image": "codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04",
-	"args": [
-		"API_KEY",
-		"API_SECRET",
-		"AWS_ACCESS_KEY_ID",
-		"AWS_DEFAULT_REGION",
-		"AWS_SECRET_ACCESS_KEY"
-	],
 	"post_install": true,
 	"options": {
 		"registry_host_arg": true,
-		"git_ask_pass": true
+		"git_ask_pass": true,
+		"mount_secrets": true
 	},
 	"installers": {
 		"apt": {
@@ -39,7 +33,7 @@
 				},
 				{
 					"name": "git+https://github.com/AllenInstitute/dynamic_routing_analysis#egg=dynamic-routing-analysis",
-					"version": "3957eca4bf73c09e8a113b680eef76373a01914f"
+					"version": "332f80d553244accf5a8417dd0181d0ab2790b08"
 				},
 				{
 					"name": "hdmf",
