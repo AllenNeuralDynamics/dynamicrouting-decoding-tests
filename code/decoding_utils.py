@@ -568,8 +568,10 @@ def wrap_decoder_helper(
                 .sort('trial_index', 'unit_id') 
             )
         except:
+            logger.info(f"No spontaneous epoch for {session_id}; skipping session")
             spont_flag=False
             spont_data=None
+            break
         
     else:
         spont_flag=False
@@ -901,14 +903,21 @@ def wrap_decoder_helper(
                         else:
                             logger.exception(f'{session_id} | Failed: decoding unknown column')
 
-                        if spont_data is not None: #save predictions about spont data plus relevant trial info
-                            result['predict_proba_spont'] = _result['predict_proba_other'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
-                            result['decision_function_spont'] = _result['decision_function_other'].tolist()
-                            result['pred_label_spont'] = _result['label_names'][_result['pred_label_other']].tolist()
-                            result['spont_trial_times'] = spont_trials['start_time'].to_list()
-                            result['spont_epoch_name'] = spont_trials['epoch_name'].to_list()
-                            result['spont_trial_is_rewarded'] = spont_trials['is_rewarded'].to_list()
-
+                        if params.test_on_spontaneous: #only save spontaneous results columns if they were computed
+                            if spont_data is not None: #save predictions about spont data plus relevant trial info
+                                result['predict_proba_spont'] = _result['predict_proba_other'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                                result['decision_function_spont'] = _result['decision_function_other'].tolist()
+                                result['pred_label_spont'] = _result['label_names'][_result['pred_label_other']].tolist()
+                                result['spont_trial_times'] = spont_trials['start_time'].to_list()
+                                result['spont_epoch_name'] = spont_trials['epoch_name'].to_list()
+                                result['spont_trial_is_rewarded'] = spont_trials['is_rewarded'].to_list()
+                            else: 
+                                result['predict_proba_spont'] = []
+                                result['decision_function_spont'] = []
+                                result['pred_label_spont'] = []
+                                result['spont_trial_times'] = []
+                                result['spont_epoch_name'] = []
+                                result['spont_trial_is_rewarded'] = []
                     else:
                         # don't save probabilities from shifts which we won't use 
                         result['predict_proba'] = None 
