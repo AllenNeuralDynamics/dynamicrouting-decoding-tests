@@ -25,6 +25,7 @@ import pydantic_settings.sources
 import pydantic.functional_serializers
 import tqdm
 import upath
+from sklearn.model_selection import StratifiedKFold
 from dynamic_routing_analysis.decoding_utils import decoder_helper, NotEnoughBlocksError
 from dynamic_routing_analysis import data_utils
 
@@ -120,7 +121,8 @@ class Params(pydantic_settings.BaseSettings):
     """ toggle testing the decoder model (trained on the full task) on spontaneous activity """
     scaler: Literal['robust','standard','none'] = 'robust'
     """ set data scaling method: standard = mean/stdev, robust = median/iqr, none = do not scale """
-
+    test_across_context: bool = False
+    """ toggle training decoder model on one context and testing on the other. Requires decoding something other than context, i.e. stimulus id """
 
     @property
     def data_path(self) -> upath.UPath:
@@ -579,7 +581,15 @@ def wrap_decoder_helper(
         spont_flag=False
         spont_data = None
 
-
+    if params.test_across_context:
+        train_test_split_labels=[
+            'train_vis_test_aud',
+            'train_vis_test_vis',
+            'train_aud_test_vis',
+            'train_aud_test_aud'
+        ]
+    else:
+        train_test_split_labels= [None]
 
     if params.label_to_decode == 'context_appropriate_for_response':
         all_trials=(
@@ -599,10 +609,9 @@ def wrap_decoder_helper(
         )
         #if only one block, this method won't work so cancel for this structure/session
         if all_trials.n_unique('block_index') != 6:
-            raise NotEnoughBlocksError(f'Expecting 6 blocks for context_appropriate_for_response analysis: {session_id} has {trials.n_unique("block_index")} blocks of observed ephys data')
+            raise NotEnoughBlocksError(f'Expecting 6 blocks for context_appropriate_for_response analysis: {session_id} has {all_trials.n_unique("block_index")} blocks of observed ephys data')
 
 
-    
     # select unit ids for resampling here - keep consistent across time bins
     resample_unit_ids=[]
     unique_unit_ids=(
@@ -734,16 +743,28 @@ def wrap_decoder_helper(
             
             logger.debug(f"Got spike counts: {spike_counts_df.shape} rows")
 
-            trials = (
-                all_trials
-                .filter(
-                    pl.col('session_id') == session_id,
-                    pl.col('trial_index').is_in(spike_counts_df['trial_index'].unique()),
-                    # obs_intervals may affect number of trials available
+            if params.label_to_decode=='rewarded_modality':
+                trials = (
+                    all_trials
+                    .filter(
+                        pl.col('session_id') == session_id,
+                        pl.col('trial_index').is_in(spike_counts_df['trial_index'].unique()),
+                        # obs_intervals may affect number of trials available
+                    )
+                    .sort('trial_index')
+                    .select(params.label_to_decode, 'start_time', 'trial_index', 'block_index', 'session_id')
                 )
-                .sort('trial_index')
-                .select(params.label_to_decode, 'start_time', 'trial_index', 'block_index', 'session_id')
-            )
+            else:
+                trials = (
+                    all_trials
+                    .filter(
+                        pl.col('session_id') == session_id,
+                        pl.col('trial_index').is_in(spike_counts_df['trial_index'].unique()),
+                        # obs_intervals may affect number of trials available
+                    )
+                    .sort('trial_index')
+                    .select(params.label_to_decode, 'start_time', 'trial_index', 'block_index', 'session_id', 'rewarded_modality')
+                )
 
             if (
                 trials['block_index'].n_unique() == 1
@@ -786,160 +807,220 @@ def wrap_decoder_helper(
             logger.debug(f"Using shifts from {shifts[0]} to {shifts[-1]}")
 
             for repeat_idx in tqdm.tqdm(range(params.n_repeats), total=params.n_repeats, unit='repeat', desc=f'repeating {structure} | {session_id}'):
-            
-                filtered_unit_df = spike_counts_df.filter(pl.col('unit_id').is_in(resample_unit_ids[repeat_idx]))
-
-                spike_counts_array = (
-                    filtered_unit_df
-                    .select('n_spikes_window')
-                    .to_numpy()
-                    .squeeze()
-                    .reshape(filtered_unit_df.n_unique('trial_index'), filtered_unit_df.n_unique('unit_id'))
-                )
-                logger.debug(f"Reshaped spike counts array: {spike_counts_array.shape}")
                 
-                unit_ids = filtered_unit_df['unit_id'].unique(maintain_order=True).to_list()
+                for train_test_split_label in train_test_split_labels: #loop through custom train-test labels
 
-                logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
+                    filtered_unit_df = spike_counts_df.filter(pl.col('unit_id').is_in(resample_unit_ids[repeat_idx]))
 
-                if spont_flag:
-                    filtered_spont_unit_df=spike_counts_spont_df.filter(pl.col('unit_id').is_in(resample_unit_ids[repeat_idx]))
-                    spont_data = (
-                        filtered_spont_unit_df
+                    spike_counts_array = (
+                        filtered_unit_df
                         .select('n_spikes_window')
                         .to_numpy()
                         .squeeze()
-                        .reshape(filtered_spont_unit_df.n_unique('trial_index'), filtered_spont_unit_df.n_unique('unit_id'))
+                        .reshape(filtered_unit_df.n_unique('trial_index'), filtered_unit_df.n_unique('unit_id'))
                     )
-                
-                for shift in (*shifts, None): # None will be a special case using all trials, with no shift
+                    logger.debug(f"Reshaped spike counts array: {spike_counts_array.shape}")
                     
-                    is_all_trials = shift is None
-                    if not is_all_trials:
-                        #if not params.linear_shift:
-                            #continue
-                        labels = label_to_decode[max_neg_shift: -max_pos_shift]
-                        if params.crossval=='blockwise':
-                            crossval_index=trials['block_index'].to_numpy().squeeze()[max_neg_shift: -max_pos_shift]
+                    unit_ids = filtered_unit_df['unit_id'].unique(maintain_order=True).to_list()
+
+                    logger.debug(f"Repeat {repeat_idx}: selected {len(sel_unit_idx)} units")
+
+                    if spont_flag:
+                        filtered_spont_unit_df=spike_counts_spont_df.filter(pl.col('unit_id').is_in(resample_unit_ids[repeat_idx]))
+                        spont_data = (
+                            filtered_spont_unit_df
+                            .select('n_spikes_window')
+                            .to_numpy()
+                            .squeeze()
+                            .reshape(filtered_spont_unit_df.n_unique('trial_index'), filtered_spont_unit_df.n_unique('unit_id'))
+                        )
+                    
+                    for shift in (*shifts, None): # None will be a special case using all trials, with no shift
+                        
+                        is_all_trials = shift is None
+                        if not is_all_trials:
+                            if params.linear_shift==0:
+                                continue
+                            labels = label_to_decode[max_neg_shift: -max_pos_shift]
+                            if params.crossval=='blockwise':
+                                crossval_index=trials['block_index'].to_numpy().squeeze()[max_neg_shift: -max_pos_shift]
+                            else:
+                                crossval_index=None
+                            first_trial_index = max_neg_shift + shift
+                            last_trial_index = len(trials) - max_pos_shift + shift
+                            logger.debug(f"Shift {shift}: using trials {first_trial_index} to {last_trial_index} out of {len(trials)}")
+                            assert first_trial_index >= 0, f"{first_trial_index=}"
+                            assert last_trial_index > first_trial_index, f"{last_trial_index=}, {first_trial_index=}"
+                            assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
+                            data = spike_counts_array[first_trial_index: last_trial_index, :]
                         else:
-                            crossval_index=None
-                        first_trial_index = max_neg_shift + shift
-                        last_trial_index = len(trials) - max_pos_shift + shift
-                        logger.debug(f"Shift {shift}: using trials {first_trial_index} to {last_trial_index} out of {len(trials)}")
-                        assert first_trial_index >= 0, f"{first_trial_index=}"
-                        assert last_trial_index > first_trial_index, f"{last_trial_index=}, {first_trial_index=}"
-                        assert last_trial_index <= spike_counts_array.shape[0], f"{last_trial_index=}, {spike_counts_array.shape[0]=}"
-                        data = spike_counts_array[first_trial_index: last_trial_index, :]
-                    else:
-                        labels = label_to_decode
-                        crossval_index=trials['block_index'].to_numpy().squeeze()
-                        data = spike_counts_array[:, :]
+                            labels = label_to_decode
+                            crossval_index=trials['block_index'].to_numpy().squeeze()
+                            data = spike_counts_array[:, :]
 
-                    assert data.shape == (len(labels), len(unit_ids)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
-                    logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} labels")
+                            if params.test_across_context:
+                                rng = np.random.default_rng()
 
-                    _result = decoder_helper(
-                        data,
-                        labels,
-                        decoder_type=params.decoder_type,
-                        crossval=params.crossval,
-                        crossval_index=crossval_index,
-                        labels_as_index=params.labels_as_index,
-                        train_test_split_input=None,
-                        regularization=params.regularization,
-                        penalty=params.penalty,
-                        solver=params.solver,
-                        n_jobs=None,
-                        other_data=spont_data,
-                        scaler=params.scaler,
-                    )
-                    result = {}
-                    result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
-                    result['balanced_accuracy_train'] = _result['balanced_accuracy_train'].item()
-                    result['time_aligned_to'] = interval_config.event_column_name
-                    result['bin_size'] = interval_config.bin_size
-                    result['sliding_window_size'] = params.sliding_window_size
-                    if params.use_cumulative_spike_counts:
-                        result['bin_center'] = stop
-                    elif params.sliding_window_size is not None:
-                        result['bin_center'] = (start_original + stop_original) / 2
-                        #result['bin_center'] = stop
-                    else:
-                        result['bin_center'] = (start + stop) / 2
-                    result['shift_idx'] = shift
-                    result['repeat_idx'] = repeat_idx
-                    result['labels'] = _result['labels'].tolist()
-                    
-                    if shift in (0, None):
-                        if params.label_to_decode in ["is_response", "is_target", "is_rewarded"]:
-                            result['decision_function'] = _result['decision_function'].tolist()
-                            result['decision_function_all'] = _result['decision_function_all'].tolist()
-                            result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
-                            result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
-                        elif params.label_to_decode=="stim_name":
-                            #if decoding only 2 stimuli
-                            if len(_result['label_names'])==2: 
+                                if train_test_split_label is None:
+                                    train_test_split_input=None
+                                else:
+                                    # label_to_decode = trials[params.label_to_decode].to_numpy().squeeze()
+                                    params.crossval='custom'
+
+                                    #divide vis trials into 2 train sets & aud trials into 2 test sets
+                                    vis_context_trial_index=trials.to_pandas().reset_index().query('rewarded_modality=="vis"').index.values
+                                    #permute vis_context_trial_index
+                                    vis_context_trial_index_permuted = rng.permutation(vis_context_trial_index)
+                                    half_len_vis_trials=np.round(len(vis_context_trial_index_permuted)/2).astype(int)
+                                    #get folds
+                                    vis_fold_1=vis_context_trial_index_permuted[:half_len_vis_trials]
+                                    vis_fold_2=vis_context_trial_index_permuted[half_len_vis_trials:]
+
+                                    aud_context_trial_index=trials.to_pandas().reset_index().query('rewarded_modality=="aud"').index.values
+                                    #permute vis_context_trial_index
+                                    aud_context_trial_index_permuted = rng.permutation(aud_context_trial_index)
+                                    half_len_aud_trials=np.round(len(aud_context_trial_index_permuted)/2).astype(int)
+                                    #get folds
+                                    aud_fold_1=aud_context_trial_index_permuted[:half_len_aud_trials]
+                                    aud_fold_2=aud_context_trial_index_permuted[half_len_aud_trials:]
+
+                                    ### does this indexing work here??
+
+                                    if train_test_split_label=='train_vis_test_aud':
+                                        train=[vis_fold_1,vis_fold_1,vis_fold_2,vis_fold_2]
+                                        test=[aud_fold_1,aud_fold_2,aud_fold_1,aud_fold_2]
+                                    elif train_test_split_label=='train_vis_test_vis':
+                                        train=[vis_fold_1,vis_fold_2]
+                                        test=[vis_fold_2,vis_fold_1]
+                                    elif train_test_split_label=='train_aud_test_vis':
+                                        train=[aud_fold_1,aud_fold_1,aud_fold_2,aud_fold_2]
+                                        test=[vis_fold_1,vis_fold_2,vis_fold_1,vis_fold_2]
+                                    elif train_test_split_label=='train_aud_test_aud':
+                                        train=[aud_fold_1,aud_fold_2]
+                                        test=[aud_fold_2,aud_fold_1]
+                                    else:
+                                        train=[]
+                                        test=[]
+                                        train_test_split_label=None
+                                        train_test_split_input=None
+
+                                    train_test_split_input=zip(train,test)
+                            else:
+                                train_test_split_label=None
+                                train_test_split_input=None
+
+
+                        assert data.shape == (len(labels), len(unit_ids)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
+                        logger.debug(f"Shift {shift}: using data shape {data.shape} with {len(labels)} labels")
+
+                        _result = decoder_helper(
+                            data,
+                            labels,
+                            decoder_type=params.decoder_type,
+                            crossval=params.crossval,
+                            crossval_index=crossval_index,
+                            labels_as_index=params.labels_as_index,
+                            train_test_split_input=train_test_split_input,
+                            train_test_split_label=train_test_split_label,
+                            regularization=params.regularization,
+                            penalty=params.penalty,
+                            solver=params.solver,
+                            n_jobs=None,
+                            other_data=spont_data,
+                            scaler=params.scaler,
+                        )
+                        result = {}
+                        result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
+                        result['balanced_accuracy_train'] = _result['balanced_accuracy_train'].item()
+                        result['time_aligned_to'] = interval_config.event_column_name
+                        result['bin_size'] = interval_config.bin_size
+                        result['sliding_window_size'] = params.sliding_window_size
+                        if params.use_cumulative_spike_counts:
+                            result['bin_center'] = stop
+                        elif params.sliding_window_size is not None:
+                            result['bin_center'] = (start_original + stop_original) / 2
+                            #result['bin_center'] = stop
+                        else:
+                            result['bin_center'] = (start + stop) / 2
+                        result['shift_idx'] = shift
+                        result['repeat_idx'] = repeat_idx
+                        result['labels'] = _result['labels'].tolist()
+                        result['train_test_split_label'] = train_test_split_label
+                        #result['train_trials'] = _result['train_trials']
+                        #result['test_trials'] = _result['test_trials']
+                        
+                        if shift in (0, None):
+                            if params.label_to_decode in ["is_response", "is_target", "is_rewarded"]:
                                 result['decision_function'] = _result['decision_function'].tolist()
                                 result['decision_function_all'] = _result['decision_function_all'].tolist()
-                                if 'vis1' in _result['label_names']:
-                                    temp_target_label='vis1'
-                                elif 'sound1' in _result['label_names']:
-                                    temp_target_label='sound1'
-                                result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
-                                result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
-                            #if decoding all 4 stimuli
-                            elif len(_result['label_names'])==4:
-                                predict_proba_multiclass=np.full((len(labels),4),np.nan)
-                                predict_proba_all_trials_multiclass=np.full((len(labels),4),np.nan)
-                                stim_order=['sound1','sound2','vis1','vis2']
-                                for ss,stim_label in enumerate(stim_order):
-                                    result['decision_function_'+stim_label] = _result['decision_function'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
-                                    result['decision_function_all_'+stim_label] = _result['decision_function_all'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
-                                    result['predict_proba_'+stim_label] = _result['predict_proba'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
-                                    result['predict_proba_all_trials_'+stim_label] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
+                                result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
+                                result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == True)[0][0]].tolist()
+                            elif params.label_to_decode=="stim_name":
+                                #if decoding only 2 stimuli
+                                if len(_result['label_names'])==2: 
+                                    result['decision_function'] = _result['decision_function'].tolist()
+                                    result['decision_function_all'] = _result['decision_function_all'].tolist()
+                                    if 'vis1' in _result['label_names']:
+                                        temp_target_label='vis1'
+                                    elif 'sound1' in _result['label_names']:
+                                        temp_target_label='sound1'
+                                    result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
+                                    result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == temp_target_label)[0][0]].tolist()
+                                #if decoding all 4 stimuli
+                                elif len(_result['label_names'])==4:
+                                    predict_proba_multiclass=np.full((len(labels),4),np.nan)
+                                    predict_proba_all_trials_multiclass=np.full((len(labels),4),np.nan)
+                                    stim_order=['sound1','sound2','vis1','vis2']
+                                    for ss,stim_label in enumerate(stim_order):
+                                        result['decision_function_'+stim_label] = _result['decision_function'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
+                                        result['decision_function_all_'+stim_label] = _result['decision_function_all'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
+                                        result['predict_proba_'+stim_label] = _result['predict_proba'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
+                                        result['predict_proba_all_trials_'+stim_label] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == stim_label)[0][0]].tolist()
 
-                        elif params.label_to_decode in ["rewarded_modality","context_appropriate_for_response"]:
-                            result['decision_function'] = _result['decision_function'].tolist()
-                            result['decision_function_all'] = _result['decision_function_all'].tolist()
-                            result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
-                            result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                            elif params.label_to_decode in ["rewarded_modality","context_appropriate_for_response"]:
+                                result['decision_function'] = _result['decision_function'].tolist()
+                                result['decision_function_all'] = _result['decision_function_all'].tolist()
+                                result['predict_proba'] = _result['predict_proba'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                                result['predict_proba_all_trials'] = _result['predict_proba_all_trials'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                            else:
+                                logger.exception(f'{session_id} | Failed: decoding unknown column')
+
+                            if params.test_on_spontaneous: #only save spontaneous results columns if they were computed
+                                if spont_data is not None: #save predictions about spont data plus relevant trial info
+                                    result['predict_proba_spont'] = _result['predict_proba_other'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
+                                    result['decision_function_spont'] = _result['decision_function_other'].tolist()
+                                    result['pred_label_spont'] = _result['label_names'][_result['pred_label_other']].tolist()
+                                    result['spont_trial_times'] = spont_trials['start_time'].to_list()
+                                    result['spont_epoch_name'] = spont_trials['epoch_name'].to_list()
+                                    result['spont_trial_is_rewarded'] = spont_trials['is_rewarded'].to_list()
+                                else: 
+                                    result['predict_proba_spont'] = []
+                                    result['decision_function_spont'] = []
+                                    result['pred_label_spont'] = []
+                                    result['spont_trial_times'] = []
+                                    result['spont_epoch_name'] = []
+                                    result['spont_trial_is_rewarded'] = []
                         else:
-                            logger.exception(f'{session_id} | Failed: decoding unknown column')
-
-                        if params.test_on_spontaneous: #only save spontaneous results columns if they were computed
-                            if spont_data is not None: #save predictions about spont data plus relevant trial info
-                                result['predict_proba_spont'] = _result['predict_proba_other'][:, np.where(_result['label_names'] == 'vis')[0][0]].tolist()
-                                result['decision_function_spont'] = _result['decision_function_other'].tolist()
-                                result['pred_label_spont'] = _result['label_names'][_result['pred_label_other']].tolist()
-                                result['spont_trial_times'] = spont_trials['start_time'].to_list()
-                                result['spont_epoch_name'] = spont_trials['epoch_name'].to_list()
-                                result['spont_trial_is_rewarded'] = spont_trials['is_rewarded'].to_list()
-                            else: 
-                                result['predict_proba_spont'] = []
-                                result['decision_function_spont'] = []
-                                result['pred_label_spont'] = []
-                                result['spont_trial_times'] = []
-                                result['spont_epoch_name'] = []
-                                result['spont_trial_is_rewarded'] = []
-                    else:
-                        # don't save probabilities from shifts which we won't use 
-                        result['predict_proba'] = None 
-                        result['predict_proba_all_trials'] = None
-                        result['decision_function'] = None
-                        result['decision_function_all'] = None 
-                        
-                    if is_all_trials:
-                        result['trial_indices'] = trials['trial_index'].to_list()
-                    elif shift in (0, None):
-                        result['trial_indices'] = trials['trial_index'].to_list()[first_trial_index: last_trial_index]
-                    else:
-                        # don't save trial indices for all shifts
-                        result['trial_indices'] = None 
-                        
-                    result['unit_ids'] = unit_ids
-                    result['coefs'] = _result['coefs'][0].tolist()
-                    result['is_all_trials'] = is_all_trials
-                    results.append(result)
+                            # don't save probabilities from shifts which we won't use 
+                            result['predict_proba'] = None 
+                            result['predict_proba_all_trials'] = None
+                            result['decision_function'] = None
+                            result['decision_function_all'] = None 
+                            
+                        if is_all_trials:
+                            result['trial_indices'] = trials['trial_index'].to_list()
+                        elif shift in (0, None):
+                            result['trial_indices'] = trials['trial_index'].to_list()[first_trial_index: last_trial_index]
+                        else:
+                            # don't save trial indices for all shifts
+                            result['trial_indices'] = None 
+                            
+                        result['unit_ids'] = unit_ids
+                        result['coefs'] = _result['coefs'][0].tolist()
+                        result['is_all_trials'] = is_all_trials
+                        results.append(result)
+                        if params.test:
+                            break
                     if params.test:
                         break
                 if params.test:

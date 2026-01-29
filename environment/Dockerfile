@@ -1,4 +1,4 @@
-# hash:sha256:829cd1e2e558a16c759e44b9c5d543dfa75f6dfeeaf262491fde2201b8698a9e
+# hash:sha256:b806b6e392cc981c071a62dbd81dd778a4793e00f2d4ca79e7bd2daef43c16f9
 ARG REGISTRY_HOST
 FROM $REGISTRY_HOST/codeocean/mambaforge3:23.1.0-4-python3.10.12-ubuntu22.04
 
@@ -34,7 +34,7 @@ RUN --mount=type=secret,id=git-access-token \
     scikit-learn==1.5.2 \
     universal-pathlib==0.1.4 \
     zarr==2.17.2 \
-    -e git+https://github.com/AllenInstitute/dynamic_routing_analysis@332f80d553244accf5a8417dd0181d0ab2790b08#egg=dynamic-routing-analysis
+    -e git+https://github.com/AllenInstitute/dynamic_routing_analysis@ea8047ee9872af7e43a494a2ea29ed84c9a91007#egg=dynamic-routing-analysis
 
 COPY postInstall /
 RUN --mount=type=secret,id=secrets . /run/secrets/secrets \
