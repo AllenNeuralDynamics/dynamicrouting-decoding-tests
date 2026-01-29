@@ -118,6 +118,8 @@ class Params(pydantic_settings.BaseSettings):
     """ toggle linear shift (if False, only runs decoding on aligned trials/ephys) """
     test_on_spontaneous: bool = False
     """ toggle testing the decoder model (trained on the full task) on spontaneous activity """
+    scaler: Literal['robust','standard','none'] = 'robust'
+    """ set data scaling method: standard = mean/stdev, robust = median/iqr, none = do not scale """
 
 
     @property
@@ -571,7 +573,7 @@ def wrap_decoder_helper(
             logger.info(f"No spontaneous epoch for {session_id}; skipping session")
             spont_flag=False
             spont_data=None
-            break
+            return
         
     else:
         spont_flag=False
@@ -849,6 +851,7 @@ def wrap_decoder_helper(
                         solver=params.solver,
                         n_jobs=None,
                         other_data=spont_data,
+                        scaler=params.scaler,
                     )
                     result = {}
                     result['balanced_accuracy_test'] = _result['balanced_accuracy_test'].item()
