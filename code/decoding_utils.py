@@ -763,7 +763,7 @@ def wrap_decoder_helper(
                         # obs_intervals may affect number of trials available
                     )
                     .sort('trial_index')
-                    .select(params.label_to_decode, 'start_time', 'trial_index', 'block_index', 'session_id', 'rewarded_modality')
+                    .select(params.label_to_decode, 'start_time', 'trial_index', 'block_index', 'session_id', 'rewarded_modality', 'is_vis_stim', 'is_aud_stim', 'is_correct')
                 )
 
             if (
@@ -861,6 +861,14 @@ def wrap_decoder_helper(
                             if params.test_across_context:
                                 rng = np.random.default_rng()
 
+                                #temporary adjustment depending on variable being decoded:
+                                if params.label_to_decode=='is_response':
+                                    vis_query_string='rewarded_modality=="vis" and is_vis_stim==True and is_correct==True'
+                                    aud_query_string='rewarded_modality=="aud" and is_aud_stim==True and is_correct==True'
+                                elif params.label_to_decode=='stim_name':
+                                    vis_query_string='rewarded_modality=="vis"'
+                                    aud_query_string='rewarded_modality=="aud"'
+
                                 if train_test_split_label is None:
                                     train_test_split_input=None
                                 else:
@@ -868,7 +876,7 @@ def wrap_decoder_helper(
                                     params.crossval='custom'
 
                                     #divide vis trials into 2 train sets & aud trials into 2 test sets
-                                    vis_context_trial_index=trials.to_pandas().reset_index().query('rewarded_modality=="vis"').index.values
+                                    vis_context_trial_index=trials.to_pandas().reset_index().query(vis_query_string).index.values
                                     #permute vis_context_trial_index
                                     vis_context_trial_index_permuted = rng.permutation(vis_context_trial_index)
                                     half_len_vis_trials=np.round(len(vis_context_trial_index_permuted)/2).astype(int)
@@ -876,15 +884,13 @@ def wrap_decoder_helper(
                                     vis_fold_1=vis_context_trial_index_permuted[:half_len_vis_trials]
                                     vis_fold_2=vis_context_trial_index_permuted[half_len_vis_trials:]
 
-                                    aud_context_trial_index=trials.to_pandas().reset_index().query('rewarded_modality=="aud"').index.values
+                                    aud_context_trial_index=trials.to_pandas().reset_index().query(aud_query_string).index.values
                                     #permute vis_context_trial_index
                                     aud_context_trial_index_permuted = rng.permutation(aud_context_trial_index)
                                     half_len_aud_trials=np.round(len(aud_context_trial_index_permuted)/2).astype(int)
                                     #get folds
                                     aud_fold_1=aud_context_trial_index_permuted[:half_len_aud_trials]
                                     aud_fold_2=aud_context_trial_index_permuted[half_len_aud_trials:]
-
-                                    ### does this indexing work here??
 
                                     if train_test_split_label=='train_vis_test_aud':
                                         train=[vis_fold_1,vis_fold_1,vis_fold_2,vis_fold_2]
