@@ -4,6 +4,10 @@
 		{
 			"id": "bfaffa07-a179-4f02-9724-4e51451d8ba6",
 			"mount": "dynamicrouting_datacube_v0.0.272"
+		},
+		{
+			"id": "ce5eac24-02f6-47a4-b937-97ac70522fbc",
+			"mount": "dynamicrouting_single_unit_activity_metrics_v0.272"
 		}
 	]
 }

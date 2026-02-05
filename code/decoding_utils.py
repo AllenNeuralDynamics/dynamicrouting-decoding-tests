@@ -89,7 +89,7 @@ class Params(pydantic_settings.BaseSettings):
     """only process areas with at least this many units"""
     input_data_type: Literal['spikes', 'facemap', 'LP'] = 'spikes'
     spikes_time_before: float = pydantic.Field(0.2, deprecated="Use time_interval_config instead")
-    crossval: Literal['5_fold', 'blockwise', '5_fold_set_random_state'] = '5_fold'
+    crossval: Literal['5_fold', 'blockwise', '5_fold_set_random_state', 'custom'] = '5_fold'
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
     """convert labels (context names) to index [0,1]"""
@@ -104,6 +104,10 @@ class Params(pydantic_settings.BaseSettings):
 
     trials_filter: Annotated[str | Expr, pydantic.AfterValidator(to_polars_expr)] = pydantic.Field(default_factory = lambda:pl.lit(True))
     """ filter trials table input to decoder by boolean column or polars expression"""
+    filter_units_by_metrics: bool = False
+    """ option to filter units by activity metrics, defined in unit_metrics_filter """
+    unit_metrics_filter: Annotated[str | Expr, pydantic.AfterValidator(to_polars_expr)] = pydantic.Field(default_factory = lambda:pl.lit(True))
+    """ filter units table input to decoder by boolean column or polars expression"""
     label_to_decode: str = 'rewarded_modality'
     """ designate label to decode; corresponds to column in the trials table"""
     spike_count_intervals: Literal['pre_stim_single_bin', 'binned_stim_and_response', 'pre_stim_single_bin_0.5', 'pre_stim_single_bin_1.5', 'binned_stim_and_response_0.025', 'binned_stim_and_response_0.5','binned_stim_0.5','binned_stim_0.1','binned_stim_0.05','binned_stim_only_0.05','binned_stim_only_0.025','binned_stim_only_0.02','binned_stim_only_0.01','binned_stim_only_0.005','binned_stim_onset_only_0.01','binned_stim_onset_only_0.005','binned_response_0.025','binned_prestim_0.1'] = 'pre_stim_single_bin'
@@ -421,20 +425,62 @@ def decode_context_with_linear_shift(
     if isinstance(session_ids, str):
         session_ids = [session_ids]
 
-    combinations_df = (
-        utils.get_df('units', lazy=True)
-        .drop_nulls('structure')
-        .filter(
-            pl.col('session_id').is_in(session_ids),
-            params.units_query,
+    if params.filter_units_by_metrics==False:
+        combinations_df = (
+            utils.get_df('units', lazy=True)
+            .drop_nulls('structure')
+            .filter(
+                pl.col('session_id').is_in(session_ids),
+                params.units_query,
+            )
+            .pipe(group_structures, keep_originals=True)
+            .pipe(repeat_multi_probe_areas)
+            .filter(params.min_n_units_query)
+            .select(params.units_group_by)
+            .unique(params.units_group_by)
+            .collect()
         )
-        .pipe(group_structures, keep_originals=True)
-        .pipe(repeat_multi_probe_areas)
-        .filter(params.min_n_units_query)
-        .select(params.units_group_by)
-        .unique(params.units_group_by)
-        .collect()
-    )
+
+    #option to apply filter by unit metrics
+    elif params.filter_units_by_metrics==True:
+        metrics_table_path=None
+        for p in sorted(utils.get_data_root().iterdir(), reverse=True): # in case we have multiple assets attached, the latest will be used
+            if p.is_dir() and p.name.startswith('dynamicrouting_single_unit'):
+                for f in p.iterdir():
+                    if f.is_file() and f.name.endswith('.parquet'):
+                        metrics_table_path=f
+                        break
+            if metrics_table_path is not None:
+                break
+
+        if metrics_table_path is not None:
+            # get unit ids defined by filter
+            # join with units lazyframe, then apply metrics filter, then get combinations
+            metrics_table=(
+                pl.scan_parquet(metrics_table_path)
+                .join(
+                    utils.get_df('units', lazy=True),
+                    on='unit_id'
+                    )
+            )
+
+            combinations_df=(
+                metrics_table
+                .drop_nulls('structure')
+                .filter(
+                    pl.col('session_id').is_in(session_ids),
+                    params.units_query,
+                    params.unit_metrics_filter,
+                )
+                .pipe(group_structures, keep_originals=True)
+                .pipe(repeat_multi_probe_areas)
+                .filter(params.min_n_units_query)
+                .select(params.units_group_by)
+                .unique(params.units_group_by)
+                .collect()
+            )
+
+
     if params.skip_existing and params.data_path.exists():
         existing = (
             pl.scan_parquet(params.data_path.as_posix().removesuffix('/') + '/')
@@ -614,22 +660,65 @@ def wrap_decoder_helper(
 
     # select unit ids for resampling here - keep consistent across time bins
     resample_unit_ids=[]
-    unique_unit_ids=(
-        utils.get_df('units', lazy=True)
-        .pipe(group_structures)
-        .filter(
-            params.units_query,
-            pl.col('session_id') == session_id,
-            pl.col('structure') == structure,
-            pl.col('electrode_group_name').is_in(electrode_group_names),
-        )
-        .select('unit_id')
-        .sort('unit_id')
-        .collect()
-        ['unit_id']
-        .unique()
-    )
     
+    if params.filter_units_by_metrics==False:
+        unique_unit_ids=(
+            utils.get_df('units', lazy=True)
+            .pipe(group_structures)
+            .filter(
+                params.units_query,
+                pl.col('session_id') == session_id,
+                pl.col('structure') == structure,
+                pl.col('electrode_group_name').is_in(electrode_group_names),
+            )
+            .select('unit_id')
+            .sort('unit_id')
+            .collect()
+            ['unit_id']
+            .unique()
+        )
+
+    # option to filter by separate unit metrics table (unit IDs must match!)
+    # unit metrics data asset folder must contain a single .parquet file!
+    elif params.filter_units_by_metrics==True:
+        metrics_table_path=None
+        for p in sorted(utils.get_data_root().iterdir(), reverse=True): # in case we have multiple assets attached, the latest will be used
+            if p.is_dir() and p.name.startswith('dynamicrouting_single_unit'):
+                for f in p.iterdir():
+                    if f.is_file() and f.name.endswith('.parquet'):
+                        metrics_table_path=f
+                        break
+            if metrics_table_path is not None:
+                break
+
+        if metrics_table_path is not None:
+            # get unit ids defined by filter
+            metrics_table=(
+                pl.scan_parquet(metrics_table_path)
+                .join(
+                    utils.get_df('units', lazy=True),
+                    on='unit_id'
+                    )
+            )
+
+            unique_unit_ids=(
+                metrics_table
+                .pipe(group_structures)
+                .filter(
+                    params.units_query,
+                    params.unit_metrics_filter,
+                    pl.col('session_id') == session_id,
+                    pl.col('structure') == structure,
+                    pl.col('electrode_group_name').is_in(electrode_group_names),
+                )
+                .select('unit_id')
+                .sort('unit_id')
+                .collect()
+                ['unit_id']
+                .unique()
+            )
+
+
     n_units_to_use = params.unit_subsample_size or len(unique_unit_ids) # if unit_subsample_size is None, use all available        
     unit_idx = list(range(0, len(unique_unit_ids)))
 
