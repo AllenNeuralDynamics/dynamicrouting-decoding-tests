@@ -899,6 +899,9 @@ def wrap_decoder_helper(
                 
                 for train_test_split_label in train_test_split_labels: #loop through custom train-test labels
 
+                    if train_test_split_label is None:
+                        train_test_split_input=None
+
                     filtered_unit_df = spike_counts_df.filter(pl.col('unit_id').is_in(resample_unit_ids[repeat_idx]))
 
                     spike_counts_array = (
@@ -928,6 +931,7 @@ def wrap_decoder_helper(
                         
                         is_all_trials = shift is None
                         if not is_all_trials:
+
                             if params.linear_shift==0:
                                 continue
                             labels = label_to_decode[max_neg_shift: -max_pos_shift]
@@ -958,9 +962,7 @@ def wrap_decoder_helper(
                                     vis_query_string='rewarded_modality=="vis"'
                                     aud_query_string='rewarded_modality=="aud"'
 
-                                if train_test_split_label is None:
-                                    train_test_split_input=None
-                                else:
+                                if train_test_split_label is not None:
                                     # label_to_decode = trials[params.label_to_decode].to_numpy().squeeze()
                                     params.crossval='custom'
 
@@ -1000,9 +1002,6 @@ def wrap_decoder_helper(
                                         train_test_split_input=None
 
                                     train_test_split_input=zip(train,test)
-                            else:
-                                train_test_split_label=None
-                                train_test_split_input=None
 
 
                         assert data.shape == (len(labels), len(unit_ids)), f"{data.shape=}, {len(labels)=}, {len(sel_unit_idx)=}"
@@ -1111,7 +1110,8 @@ def wrap_decoder_helper(
                             result['trial_indices'] = None 
                             
                         result['unit_ids'] = unit_ids
-                        result['coefs'] = _result['coefs'][0].tolist()
+                        # result['coefs'] = _result['coefs'][0].tolist()
+                        result['coefs'] = np.nanmean(np.vstack(_result['coefs_all']),axis=0).tolist()
                         result['is_all_trials'] = is_all_trials
                         results.append(result)
                         if params.test:
