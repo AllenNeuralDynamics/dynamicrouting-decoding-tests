@@ -33,7 +33,7 @@
 				},
 				{
 					"name": "git+https://github.com/AllenInstitute/dynamic_routing_analysis#egg=dynamic-routing-analysis",
-					"version": "ea8047ee9872af7e43a494a2ea29ed84c9a91007"
+					"version": "d334154b1c1e7e1d9bdd5b61bd90883fd6412999"
 				},
 				{
 					"name": "hdmf",

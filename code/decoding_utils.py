@@ -89,7 +89,9 @@ class Params(pydantic_settings.BaseSettings):
     """only process areas with at least this many units"""
     input_data_type: Literal['spikes', 'facemap', 'LP'] = 'spikes'
     spikes_time_before: float = pydantic.Field(0.2, deprecated="Use time_interval_config instead")
-    crossval: Literal['5_fold', 'blockwise', '5_fold_set_random_state', 'custom'] = '5_fold'
+    crossval: Literal['5_fold', 'blockwise', '5_fold_set_random_state', 'custom', 'leave_2_blocks_out', 'leave_2_blocks_out_adjacent',
+    'leave_2_blocks_out_half_block_shifts','leave_1_half_block_out','leave_2_half_blocks_out_full_block_shifts',
+    'leave_2_blocks_out_half_block_shifts_wraparound'] = '5_fold'
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
     """convert labels (context names) to index [0,1]"""
@@ -127,6 +129,8 @@ class Params(pydantic_settings.BaseSettings):
     """ set data scaling method: standard = mean/stdev, robust = median/iqr, none = do not scale """
     test_across_context: bool = False
     """ toggle training decoder model on one context and testing on the other. Requires decoding something other than context, i.e. stimulus id """
+    save_all_coefs: bool = False
+    """ toggle saving decoder coefficients across all train/test folds """
 
     @property
     def data_path(self) -> upath.UPath:
@@ -935,7 +939,7 @@ def wrap_decoder_helper(
                             if params.linear_shift==0:
                                 continue
                             labels = label_to_decode[max_neg_shift: -max_pos_shift]
-                            if params.crossval=='blockwise':
+                            if params.crossval=='blockwise' or params.crossval=='leave_2_blocks_out':
                                 crossval_index=trials['block_index'].to_numpy().squeeze()[max_neg_shift: -max_pos_shift]
                             else:
                                 crossval_index=None
@@ -1040,8 +1044,20 @@ def wrap_decoder_helper(
                         result['repeat_idx'] = repeat_idx
                         result['labels'] = _result['labels'].tolist()
                         result['train_test_split_label'] = train_test_split_label
-                        #result['train_trials'] = _result['train_trials']
-                        #result['test_trials'] = _result['test_trials']
+
+                        train_set_indices=[]
+                        for idx, trial_list in enumerate(_result['train_trials']):
+                            train_set_indices.append(np.ones(len(trial_list))*idx)
+                        result['train_set_indices'] = np.hstack(train_set_indices).astype('int').tolist()
+                        result['train_trials'] = np.hstack(_result['train_trials']).tolist()
+                        
+                        test_set_indices=[]
+                        for idx, trial_list in enumerate(_result['test_trials']):
+                            test_set_indices.append(np.ones(len(trial_list))*idx)
+                        result['test_set_indices'] = np.hstack(test_set_indices).astype('int').tolist()
+                        result['test_trials'] = np.hstack(_result['test_trials']).tolist()
+
+                        result['balanced_accuracy_test_all'] = _result['balanced_accuracy_test_all'].tolist()
                         
                         if shift in (0, None):
                             if params.label_to_decode in ["is_response", "is_target", "is_rewarded"]:
@@ -1112,6 +1128,14 @@ def wrap_decoder_helper(
                         result['unit_ids'] = unit_ids
                         # result['coefs'] = _result['coefs'][0].tolist()
                         result['coefs'] = np.nanmean(np.vstack(_result['coefs_all']),axis=0).tolist()
+                        if params.save_all_coefs:
+                            coef_crossval_indices=[]
+                            all_coefs=[]
+                            for idx, coef_list in enumerate(_result['coefs_all']):
+                                coef_crossval_indices.append(np.ones(len(coef_list[0]))*idx)
+                                all_coefs.append(coef_list[0])
+                            result['coef_crossval_indices'] = np.hstack(coef_crossval_indices).astype('int').tolist()
+                            result['coefs_all'] = np.hstack(all_coefs).tolist()
                         result['is_all_trials'] = is_all_trials
                         results.append(result)
                         if params.test:
