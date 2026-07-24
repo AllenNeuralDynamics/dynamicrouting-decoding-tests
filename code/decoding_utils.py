@@ -91,7 +91,7 @@ class Params(pydantic_settings.BaseSettings):
     spikes_time_before: float = pydantic.Field(0.2, deprecated="Use time_interval_config instead")
     crossval: Literal['5_fold', 'blockwise', '5_fold_set_random_state', 'custom', 'leave_2_blocks_out', 'leave_2_blocks_out_adjacent',
     'leave_2_blocks_out_half_block_shifts','leave_1_half_block_out','leave_2_half_blocks_out_full_block_shifts',
-    'leave_2_blocks_out_half_block_shifts_wraparound'] = '5_fold'
+    'leave_2_blocks_out_half_block_shifts_wraparound','5x_5_fold'] = '5_fold'
     """blockwise untested with linear shift"""
     labels_as_index: bool = True
     """convert labels (context names) to index [0,1]"""
